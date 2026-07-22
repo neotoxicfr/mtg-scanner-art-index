@@ -13,8 +13,8 @@ HASH_BYTES = 4 * _CHANNEL_BYTES  # 128 bytes, 1024 bits
 
 # Bump whenever anything in this module changes the produced bits (crop box,
 # hash size, planes, interpolation): published index releases carry this and
-# the app refuses a mismatched index. v1 = gray art dHash, v2 = gray+BGR.
-HASH_ALGO_VERSION = 2
+# consumers checking meta.algo_version refuse a mismatched index.
+HASH_ALGO_VERSION = 1
 
 # Relative art box, tuned to cover the illustration across frame families
 # (1993/1997/2003/2015). The edges deliberately include a sliver of frame:
