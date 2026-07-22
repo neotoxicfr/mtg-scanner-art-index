@@ -60,12 +60,12 @@ def hash_scan_art(warped: np.ndarray) -> list[bytes]:
 
 
 def hamming_distances(query: bytes, hashes: np.ndarray) -> np.ndarray:
-    """Distances between one hash and an (N, HASH_BYTES) uint8 matrix.
+    """Distances between one hash and a contiguous (N, HASH_BYTES) uint8 matrix.
 
     Computed on a uint64 view with hardware popcount — ~15x faster than
     unpacking to bits for a 59k-row index."""
     q = np.frombuffer(query, dtype=np.uint64)
-    m = np.ascontiguousarray(hashes).view(np.uint64)
+    m = hashes.view(np.uint64)
     return np.bitwise_count(np.bitwise_xor(m, q)).sum(axis=1, dtype=np.uint32)
 
 

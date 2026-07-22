@@ -35,7 +35,7 @@ jobs:
       - name: Publish release
         if: steps.build.outputs.new != '0'
         run: |
-          gh release delete latest --repo "$GITHUB_REPOSITORY" --yes || true
+          gh release delete latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
           gh release create latest art_hashes.sqlite \
             --repo "$GITHUB_REPOSITORY" \
             --title "Art-hash index (${{ steps.build.outputs.groups }} groups)" \

@@ -28,16 +28,21 @@ OUT = Path("art_hashes.sqlite")
 REQUEST_DELAY = 0.11
 
 
-def fetch_bulk(dest: Path) -> str:
-    with httpx.Client(headers=UA, timeout=None, follow_redirects=True) as client:
+def bulk_entry() -> dict:
+    with httpx.Client(headers=UA, timeout=30) as client:
         meta = client.get("https://api.scryfall.com/bulk-data").json()
-        entry = next(e for e in meta["data"] if e["type"] == BULK_TYPE)
-        with client.stream("GET", entry["download_uri"]) as r:
-            r.raise_for_status()
-            with dest.open("wb") as f:
-                for chunk in r.iter_bytes(1 << 20):
-                    f.write(chunk)
-    return entry["updated_at"]
+    return next(e for e in meta["data"] if e["type"] == BULK_TYPE)
+
+
+def fetch_bulk(entry: dict, dest: Path) -> None:
+    with (
+        httpx.Client(headers=UA, timeout=None, follow_redirects=True) as client,
+        client.stream("GET", entry["download_uri"]) as r,
+    ):
+        r.raise_for_status()
+        with dest.open("wb") as f:
+            for chunk in r.iter_bytes(1 << 20):
+                f.write(chunk)
 
 
 def open_index(path: Path) -> sqlite3.Connection:
@@ -70,12 +75,30 @@ def group_of(card: dict) -> tuple[str, str, str] | None:
     return illu, frame, uri
 
 
+def emit_output(new: int, groups: int) -> None:
+    github_output = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+    if github_output:
+        with github_output.open("a", encoding="utf-8") as f:
+            f.write(f"new={new}\ngroups={groups}\n")
+
+
 def main() -> None:
-    bulk = Path("bulk_default.json")
-    stamp = fetch_bulk(bulk)
+    entry = bulk_entry()
+    stamp = entry["updated_at"]
     print(f"bulk {BULK_TYPE} dated {stamp}")
 
     conn = open_index(OUT)
+    # Short-circuit: nothing to do when the bulk is unchanged (saves parsing
+    # the 450MB file on quiet days).
+    prev_stamp = conn.execute("SELECT value FROM meta WHERE key='bulk_updated_at'").fetchone()
+    if prev_stamp is not None and prev_stamp[0] == stamp:
+        total = conn.execute("SELECT count(*) FROM art_hashes").fetchone()[0]
+        print("bulk unchanged — index already current")
+        emit_output(0, total)
+        return
+
+    bulk = Path("bulk_default.json")
+    fetch_bulk(entry, bulk)
     have = {
         (r[0], r[1])
         for r in conn.execute("SELECT illustration_id, frame FROM art_hashes").fetchall()
@@ -130,11 +153,7 @@ def main() -> None:
     bulk.unlink(missing_ok=True)
     summary = {"groups": total, "new": done, "algo_version": HASH_ALGO_VERSION, "bulk": stamp}
     print(json.dumps(summary))
-    # expose for the workflow step
-    github_output = Path(sys.argv[1]) if len(sys.argv) > 1 else None
-    if github_output:
-        with github_output.open("a", encoding="utf-8") as f:
-            f.write(f"new={done}\ngroups={total}\n")
+    emit_output(done, total)
 
 
 if __name__ == "__main__":

@@ -99,6 +99,13 @@ By design, a group match does **not** distinguish:
 These are features, not bugs: they keep the index small and the semantics
 truthful. Resolve them downstream with OCR or user choice.
 
+Known limitations:
+
+- **Double-faced cards**: only the front face is indexed; back-face scans
+  need another identification path.
+- Query offsets cover vertical framing drift only; strong horizontal
+  misframing degrades distances.
+
 ## Build pipeline
 
 [`build_index.py`](build_index.py) runs daily via GitHub Actions:
