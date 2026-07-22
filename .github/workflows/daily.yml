@@ -1,0 +1,51 @@
+name: Update art-hash index
+
+on:
+  schedule:
+    - cron: "30 4 * * *" # daily, after Scryfall's bulk regeneration
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install mtgscan (hash function source of truth)
+        run: |
+          pip install "git+https://github.com/neotoxicfr/mtgscan@dev" httpx ijson opencv-python-headless numpy
+        env:
+          GIT_ASKPASS: /bin/true
+          # private app repo: provide a read token
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.APP_REPO_TOKEN }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/
+
+      - name: Download previous index
+        continue-on-error: true
+        run: |
+          gh release download latest --repo "$GITHUB_REPOSITORY" --pattern art_hashes.sqlite || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build/update index
+        id: build
+        run: python build_index.py "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        if: steps.build.outputs.new != '0'
+        run: |
+          gh release delete latest --repo "$GITHUB_REPOSITORY" --yes || true
+          git tag -f latest || true
+          gh release create latest art_hashes.sqlite \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Art-hash index (${{ steps.build.outputs.groups }} groups)" \
+            --notes "Automated daily update. New groups: ${{ steps.build.outputs.new }}."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
