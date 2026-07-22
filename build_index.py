@@ -3,8 +3,7 @@
 Downloads the Scryfall `default_cards` bulk (covers every printing, including
 language-exclusive ones), diffs its (illustration_id, frame) groups against
 the previous index, fetches only the missing card images (rate-limited) and
-hashes their art region with mtgscan's hash function (single source of truth,
-installed from the app repository).
+hashes their art region with the reference implementation (image_hash.py).
 
 Output: art_hashes.sqlite (art_hashes table + meta table).
 """
@@ -21,12 +20,7 @@ import ijson
 import cv2
 import numpy as np
 
-try:
-    # Preferred once the app repo is public: single source of truth.
-    from mtgscan.vision.image_hash import HASH_ALGO_VERSION, hash_card_art
-except ImportError:
-    # Vendored copy (see image_hash.py header) while the app repo is private.
-    from image_hash import HASH_ALGO_VERSION, hash_card_art
+from image_hash import HASH_ALGO_VERSION, hash_card_art
 
 BULK_TYPE = "default_cards"
 UA = {"User-Agent": "mtg-scanner-art-index/1.0 (+https://github.com/neotoxicfr/mtg-scanner-art-index)"}
