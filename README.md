@@ -18,13 +18,15 @@ Scryfall identifiers.
 
 ## Setup
 
-1. Repository secret `APP_REPO_TOKEN`: fine-grained PAT with read access to
-   the app repository (needed while it is private, for `pip install git+...`).
-2. Seed the first release (from a machine holding a built index):
+No secrets required: the hash function is vendored (`image_hash.py`, kept in
+sync with the app; `HASH_ALGO_VERSION` guards divergence) and releases are
+published with the workflow's automatic token.
 
-   ```
-   python tools/export_art_index.py            # in the app repository
-   gh release create latest art_hashes.sqlite --repo <owner>/mtg-scanner-art-index
-   ```
+1. Seed the first release (from a machine holding a built index), or simply
+   run the workflow manually (`workflow_dispatch`) and let it build from
+   scratch (~2-3h).
+2. The daily workflow keeps it updated incrementally.
 
-3. The daily workflow keeps it updated; `workflow_dispatch` allows manual runs.
+While this repository is private, the app cannot fetch releases without a
+token and keeps using its locally built index; once public, the app updates
+from here automatically and unauthenticated.
