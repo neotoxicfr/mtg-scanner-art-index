@@ -1,6 +1,7 @@
-# Vendored from mtgscan/src/mtgscan/vision/image_hash.py — keep in sync.
-# HASH_ALGO_VERSION guards against divergence: a mismatched index is refused
-# by the app instead of silently mismatching.
+# Reference implementation of the art hash. Downstream apps must reproduce
+# these exact bits to interoperate; any change to the output requires bumping
+# HASH_ALGO_VERSION (see CONTRIBUTING.md) — consumers checking meta.algo_version
+# then fail closed instead of mismatching silently.
 import cv2
 import numpy as np
 
