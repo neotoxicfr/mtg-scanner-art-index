@@ -36,9 +36,21 @@ jobs:
         if: steps.build.outputs.new != '0'
         run: |
           gh release delete latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          {
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Groups | ${{ steps.build.outputs.groups }} |"
+            echo "| New this run | ${{ steps.build.outputs.new }} |"
+            echo "| Hash algo | v${{ steps.build.outputs.algo }} |"
+            echo "| Scryfall bulk | ${{ steps.build.outputs.bulk }} |"
+            echo ""
+            echo "One 1024-bit hybrid dHash per (illustration_id, frame) group."
+            echo "Check \`meta.algo_version\` before use — see the README for the"
+            echo "exact hash specification and a consumer example."
+          } > notes.md
           gh release create latest art_hashes.sqlite \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Art-hash index (${{ steps.build.outputs.groups }} groups)" \
-            --notes "Automated daily update. New groups: ${{ steps.build.outputs.new }}."
+            --title "Art-hash index v${{ steps.build.outputs.algo }} — ${{ steps.build.outputs.groups }} groups (${{ steps.build.outputs.bulk }})" \
+            --notes-file notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
