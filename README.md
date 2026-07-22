@@ -1,4 +1,4 @@
-# mtgscan-art-index
+# mtg-scanner-art-index
 
 Prebuilt perceptual-hash index of Magic: The Gathering card illustrations,
 consumed by [mtgscan](https://github.com/neotoxicfr/mtgscan).
@@ -24,7 +24,7 @@ Scryfall identifiers.
 
    ```
    python tools/export_art_index.py            # in the app repository
-   gh release create latest art_hashes.sqlite --repo <owner>/mtgscan-art-index
+   gh release create latest art_hashes.sqlite --repo <owner>/mtg-scanner-art-index
    ```
 
 3. The daily workflow keeps it updated; `workflow_dispatch` allows manual runs.

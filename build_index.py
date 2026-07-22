@@ -28,7 +28,7 @@ except ImportError:
     raise
 
 BULK_TYPE = "default_cards"
-UA = {"User-Agent": "mtgscan-art-index/1.0 (+https://github.com/neotoxicfr/mtgscan-art-index)"}
+UA = {"User-Agent": "mtg-scanner-art-index/1.0 (+https://github.com/neotoxicfr/mtg-scanner-art-index)"}
 OUT = Path("art_hashes.sqlite")
 REQUEST_DELAY = 0.11
 
