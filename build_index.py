@@ -18,14 +18,15 @@ from pathlib import Path
 import httpx
 import ijson
 
-try:
-    import cv2
-    import numpy as np
+import cv2
+import numpy as np
 
+try:
+    # Preferred once the app repo is public: single source of truth.
     from mtgscan.vision.image_hash import HASH_ALGO_VERSION, hash_card_art
 except ImportError:
-    print("mtgscan must be installed: pip install 'git+https://github.com/neotoxicfr/mtgscan@dev'")
-    raise
+    # Vendored copy (see image_hash.py header) while the app repo is private.
+    from image_hash import HASH_ALGO_VERSION, hash_card_art
 
 BULK_TYPE = "default_cards"
 UA = {"User-Agent": "mtg-scanner-art-index/1.0 (+https://github.com/neotoxicfr/mtg-scanner-art-index)"}
