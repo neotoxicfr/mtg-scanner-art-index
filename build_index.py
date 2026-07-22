@@ -75,11 +75,12 @@ def group_of(card: dict) -> tuple[str, str, str] | None:
     return illu, frame, uri
 
 
-def emit_output(new: int, groups: int) -> None:
+def emit_output(new: int, groups: int, bulk_stamp: str = "") -> None:
     github_output = Path(sys.argv[1]) if len(sys.argv) > 1 else None
     if github_output:
         with github_output.open("a", encoding="utf-8") as f:
             f.write(f"new={new}\ngroups={groups}\n")
+            f.write(f"algo={HASH_ALGO_VERSION}\nbulk={bulk_stamp[:10]}\n")
 
 
 def main() -> None:
@@ -94,7 +95,7 @@ def main() -> None:
     if prev_stamp is not None and prev_stamp[0] == stamp:
         total = conn.execute("SELECT count(*) FROM art_hashes").fetchone()[0]
         print("bulk unchanged — index already current")
-        emit_output(0, total)
+        emit_output(0, total, stamp)
         return
 
     bulk = Path("bulk_default.json")
@@ -153,7 +154,7 @@ def main() -> None:
     bulk.unlink(missing_ok=True)
     summary = {"groups": total, "new": done, "algo_version": HASH_ALGO_VERSION, "bulk": stamp}
     print(json.dumps(summary))
-    emit_output(done, total)
+    emit_output(done, total, stamp)
 
 
 if __name__ == "__main__":
