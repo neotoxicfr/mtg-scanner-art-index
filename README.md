@@ -51,7 +51,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 Map a matched group back to concrete printings with Scryfall's own data:
 every card object carries `illustration_id` and `frame`.
 
-## Hash specification (algo_version 2)
+## Hash specification (algo_version 1)
 
 The reference implementation is [`image_hash.py`](image_hash.py) (pure
 OpenCV + NumPy, no other dependencies). To interoperate you must reproduce it
