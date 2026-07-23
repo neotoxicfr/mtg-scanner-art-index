@@ -89,30 +89,43 @@ def main() -> None:
     print(f"bulk {BULK_TYPE} dated {stamp}")
 
     conn = open_index(OUT)
-    # Short-circuit: nothing to do when the bulk is unchanged (saves parsing
-    # the 450MB file on quiet days).
-    prev_stamp = conn.execute("SELECT value FROM meta WHERE key='bulk_updated_at'").fetchone()
-    if prev_stamp is not None and prev_stamp[0] == stamp:
-        total = conn.execute("SELECT count(*) FROM art_hashes").fetchone()[0]
-        print("bulk unchanged — index already current")
-        emit_output(0, total, stamp)
-        return
-
-    bulk = Path("bulk_default.json")
-    fetch_bulk(entry, bulk)
     have = {
         (r[0], r[1])
         for r in conn.execute("SELECT illustration_id, frame FROM art_hashes").fetchall()
     }
+
+    # Localized arts carry their own illustration_id but exist in no English
+    # printing, so default_cards never lists them (JP Mystical Archive, WCS
+    # promos, Phyrexian SLDs...). extra_groups.json pins them explicitly.
     todo: dict[tuple[str, str], str] = {}
-    with bulk.open("rb") as f:
-        for card in ijson.items(f, "item"):
-            g = group_of(card)
-            if g is None:
-                continue
-            illu, frame, uri = g
-            if (illu, frame) not in have and (illu, frame) not in todo:
-                todo[(illu, frame)] = uri
+    extra_path = Path("extra_groups.json")
+    if extra_path.exists():
+        for extra in json.loads(extra_path.read_text(encoding="utf-8")):
+            key = (extra["illustration_id"], extra["frame"])
+            if key not in have:
+                todo[key] = extra["image_uri"].replace("/normal/", "/small/")
+
+    # Skip the 450MB bulk entirely when it is unchanged (quiet days); pinned
+    # extras are still fetched above if any are missing.
+    prev_stamp = conn.execute("SELECT value FROM meta WHERE key='bulk_updated_at'").fetchone()
+    bulk_changed = prev_stamp is None or prev_stamp[0] != stamp
+    if not bulk_changed and not todo:
+        total = conn.execute("SELECT count(*) FROM art_hashes").fetchone()[0]
+        print("bulk unchanged — index already current")
+        emit_output(0, total, stamp)
+        return
+    if bulk_changed:
+        bulk = Path("bulk_default.json")
+        fetch_bulk(entry, bulk)
+        with bulk.open("rb") as f:
+            for card in ijson.items(f, "item"):
+                g = group_of(card)
+                if g is None:
+                    continue
+                illu, frame, uri = g
+                if (illu, frame) not in have and (illu, frame) not in todo:
+                    todo[(illu, frame)] = uri
+        bulk.unlink(missing_ok=True)
     print(f"{len(have)} groups indexed, {len(todo)} missing")
 
     done = 0
@@ -151,7 +164,6 @@ def main() -> None:
     )
     conn.commit()
     conn.close()
-    bulk.unlink(missing_ok=True)
     summary = {"groups": total, "new": done, "algo_version": HASH_ALGO_VERSION, "bulk": stamp}
     print(json.dumps(summary))
     emit_output(done, total, stamp)
