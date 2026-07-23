@@ -8,8 +8,9 @@ of thousands of card images and fingerprinting them before the first scan can
 work. This repository does that work once, in public, and publishes the result
 as a small file anyone can consume.
 
-- **~59,000 entries**, one per `(illustration_id, frame)` group — every unique
-  artwork in every frame style it was printed in
+- **60,000+ entries**, one per `(illustration_id, frame)` group — every unique
+  artwork in every frame style it was printed in (see the release title for
+  the exact current count)
 - **1024-bit hybrid perceptual hash** per entry (grayscale + B/G/R channel
   dHashes of the art region)
 - Published daily as the [`latest` release](../../releases/latest) asset
@@ -112,6 +113,11 @@ Known limitations:
 download the previous release → diff Scryfall's `default_cards` bulk for
 missing groups → fetch only those images (rate-limited, `small` size) → hash
 → publish. An `algo_version` change triggers a full rebuild automatically.
+
+[`extra_groups.json`](extra_groups.json) pins the handful of localized art
+variants that share an English printing's collector number and therefore
+never appear in `default_cards` (e.g. the Chinese-art Ravnica commons); the
+build fetches them independently of the bulk diff.
 
 ## Legal
 
