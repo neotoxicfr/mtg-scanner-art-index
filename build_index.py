@@ -19,7 +19,7 @@ import httpx
 import ijson
 import numpy as np
 
-from image_hash import HASH_ALGO_VERSION, hash_card_art
+from image_hash import ART_BOTTOM, ART_LEFT, ART_RIGHT, ART_TOP, HASH_ALGO_VERSION, hash_card_art
 
 BULK_TYPE = "default_cards"
 UA = {"User-Agent": "mtg-scanner-art-index/1.0 (+https://github.com/neotoxicfr/mtg-scanner-art-index)"}
@@ -44,6 +44,12 @@ def fetch_bulk(entry: dict, dest: Path) -> None:
                 f.write(chunk)
 
 
+# Empreinte des paramètres qui changent les bits produits : tout écart avec
+# l'index précédent force un rebuild complet, sans toucher au numéro de
+# version (qui reste 1 jusqu'au lancement public).
+CROP_SIGNATURE = f"{ART_TOP},{ART_BOTTOM},{ART_LEFT},{ART_RIGHT}"
+
+
 def open_index(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.executescript(
@@ -52,8 +58,11 @@ def open_index(path: Path) -> sqlite3.Connection:
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);"
     )
     algo = conn.execute("SELECT value FROM meta WHERE key='algo_version'").fetchone()
-    if algo is not None and int(algo[0]) != HASH_ALGO_VERSION:
-        print(f"algo changed (v{algo[0]} -> v{HASH_ALGO_VERSION}): full rebuild")
+    crop = conn.execute("SELECT value FROM meta WHERE key='crop_signature'").fetchone()
+    stale_algo = algo is not None and int(algo[0]) != HASH_ALGO_VERSION
+    stale_crop = crop is None or crop[0] != CROP_SIGNATURE
+    if (algo is not None or crop is not None) and (stale_algo or stale_crop):
+        print(f"hash params changed (algo {algo} crop {crop}): full rebuild")
         conn.execute("DELETE FROM art_hashes")
         conn.execute("DELETE FROM meta")
         conn.commit()
@@ -159,6 +168,7 @@ def main() -> None:
         "INSERT OR REPLACE INTO meta VALUES (?, ?)",
         [
             ("algo_version", str(HASH_ALGO_VERSION)),
+            ("crop_signature", CROP_SIGNATURE),
             ("groups", str(total)),
             ("bulk_updated_at", stamp),
         ],
