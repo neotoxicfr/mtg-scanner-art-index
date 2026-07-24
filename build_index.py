@@ -19,7 +19,14 @@ import httpx
 import ijson
 import numpy as np
 
-from image_hash import ART_BOTTOM, ART_LEFT, ART_RIGHT, ART_TOP, HASH_ALGO_VERSION, hash_card_art
+from image_hash import (
+    ART_BOTTOM,
+    ART_LEFT,
+    ART_RIGHT,
+    ART_TOP,
+    HASH_ALGO_VERSION,
+    hash_card_art,
+)
 
 BULK_TYPE = "default_cards"
 UA = {"User-Agent": "mtg-scanner-art-index/1.0 (+https://github.com/neotoxicfr/mtg-scanner-art-index)"}
