@@ -14,10 +14,9 @@ import sys
 import time
 from pathlib import Path
 
+import cv2
 import httpx
 import ijson
-
-import cv2
 import numpy as np
 
 from image_hash import HASH_ALGO_VERSION, hash_card_art
@@ -141,7 +140,7 @@ def main() -> None:
                 if img is None:
                     raise ValueError("undecodable")
                 batch.append((illu, frame, hash_card_art(img)))
-            except Exception as e:
+            except (httpx.HTTPError, ValueError, cv2.error) as e:
                 print(f"skip {illu}/{frame}: {e}")
             done += 1
             if len(batch) >= 100:
