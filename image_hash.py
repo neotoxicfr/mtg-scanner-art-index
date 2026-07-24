@@ -14,19 +14,27 @@ HASH_BYTES = 4 * _CHANNEL_BYTES  # 128 bytes, 1024 bits
 # Bump whenever anything in this module changes the produced bits (crop box,
 # hash size, planes, interpolation): published index releases carry this and
 # consumers checking meta.algo_version refuse a mismatched index.
-HASH_ALGO_VERSION = 1
+HASH_ALGO_VERSION = 2
 
-# Relative art box, tuned to cover the illustration across frame families
-# (1993/1997/2003/2015). The edges deliberately include a sliver of frame:
-# that is what separates the same illustration reprinted in another frame.
-ART_TOP = 0.11
-ART_BOTTOM = 0.54
-ART_LEFT = 0.09
-ART_RIGHT = 0.91
+# Relative art box, INTERIOR to the illustration across every frame family
+# (1993/1997/2003/2015/borderless): no frame sliver. One hash per
+# illustration — printings sharing the art hash identically regardless of the
+# frame; the printing is resolved downstream by the collector line.
+ART_TOP = 0.16
+ART_BOTTOM = 0.50
+ART_LEFT = 0.14
+ART_RIGHT = 0.86
 
-# Scans are hashed with several vertical offsets of the art box and matched on
-# the minimum distance, absorbing the imperfect framing of the warp.
-_QUERY_OFFSETS = (0.0, -0.02, 0.02, 0.04)
+# Scans are hashed with several offsets of the art box (dx, dy) and matched
+# on the minimum distance, absorbing the imperfect framing of the warp.
+_QUERY_OFFSETS = (
+    (0.0, 0.0),
+    (0.0, -0.02),
+    (0.0, 0.02),
+    (0.0, 0.04),
+    (-0.011, 0.0),
+    (0.011, 0.0),
+)
 
 
 def _dhash_plane(plane: np.ndarray) -> bytes:
@@ -42,11 +50,13 @@ def _dhash_channels(image: np.ndarray) -> bytes:
     return b"".join([_dhash_plane(gray)] + [_dhash_plane(image[:, :, ch]) for ch in range(3)])
 
 
-def _art_crop(image: np.ndarray, dy: float = 0.0) -> np.ndarray:
+def _art_crop(image: np.ndarray, dx: float = 0.0, dy: float = 0.0) -> np.ndarray:
     h, w = image.shape[:2]
     top = max(0, round(h * (ART_TOP + dy)))
     bottom = min(h, round(h * (ART_BOTTOM + dy)))
-    return image[top:bottom, round(w * ART_LEFT) : round(w * ART_RIGHT)]
+    left = max(0, round(w * (ART_LEFT + dx)))
+    right = min(w, round(w * (ART_RIGHT + dx)))
+    return image[top:bottom, left:right]
 
 
 def hash_card_art(image: np.ndarray) -> bytes:
@@ -56,7 +66,7 @@ def hash_card_art(image: np.ndarray) -> bytes:
 
 def hash_scan_art(warped: np.ndarray) -> list[bytes]:
     """Query hashes of a warped scan's art region, one per framing offset."""
-    return [_dhash_channels(_art_crop(warped, dy)) for dy in _QUERY_OFFSETS]
+    return [_dhash_channels(_art_crop(warped, dx, dy)) for dx, dy in _QUERY_OFFSETS]
 
 
 def hamming_distances(query: bytes, hashes: np.ndarray) -> np.ndarray:

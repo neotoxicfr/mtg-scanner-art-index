@@ -38,6 +38,6 @@ def test_same_image_is_close_to_itself():
 def test_scan_offsets_and_min_distances():
     img = _card(4)
     queries = hash_scan_art(img)
-    assert len(queries) == 4
+    assert len(queries) == 6
     mat = np.frombuffer(hash_card_art(img), dtype=np.uint8).reshape(1, HASH_BYTES)
     assert min_distances(queries, mat)[0] == 0

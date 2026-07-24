@@ -62,6 +62,9 @@ def open_index(path: Path) -> sqlite3.Connection:
 
 
 def group_of(card: dict) -> tuple[str, str, str] | None:
+    # Un hash par ILLUSTRATION (algo v2) : le crop est interieur a l'art, les
+    # frames d'une meme illustration hashent pareil — la colonne frame reste
+    # dans le schema pour compat mais vaut "".
     illu = card.get("illustration_id")
     if illu is None and card.get("card_faces"):
         illu = card["card_faces"][0].get("illustration_id")
@@ -69,10 +72,9 @@ def group_of(card: dict) -> tuple[str, str, str] | None:
     if not images and card.get("card_faces"):
         images = card["card_faces"][0].get("image_uris") or {}
     uri = images.get("small")
-    frame = card.get("frame")
-    if illu is None or frame is None or uri is None:
+    if illu is None or uri is None:
         return None
-    return illu, frame, uri
+    return illu, "", uri
 
 
 def emit_output(new: int, groups: int, bulk_stamp: str = "") -> None:
@@ -101,7 +103,7 @@ def main() -> None:
     extra_path = Path("extra_groups.json")
     if extra_path.exists():
         for extra in json.loads(extra_path.read_text(encoding="utf-8")):
-            key = (extra["illustration_id"], extra["frame"])
+            key = (extra["illustration_id"], "")
             if key not in have:
                 todo[key] = extra["image_uri"].replace("/normal/", "/small/")
 
