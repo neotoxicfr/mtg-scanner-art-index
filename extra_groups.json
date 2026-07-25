@@ -24,22 +24,10 @@
     "comment": "Prey Upon [isd ko] — localized art variant sharing an EN printing's collector number — absent from default_cards"
   },
   {
-    "illustration_id": "5ec713ae-4ade-4c85-98d6-5d0b56fc7a5b",
-    "frame": "1997",
-    "image_uri": "https://cards.scryfall.io/normal/front/3/9/39026ee6-ebb5-4e5c-a300-a6c0ed8b1e64.jpg?1562908412",
-    "comment": "Illusion // Reality [apc pt] — localized art variant sharing an EN printing's collector number — absent from default_cards"
-  },
-  {
     "illustration_id": "70eec478-45ae-4ce8-8199-720209599e2e",
     "frame": "2015",
     "image_uri": "https://cards.scryfall.io/normal/front/4/2/425897a6-9b7e-4ca8-9ae3-d9f710c47952.jpg?1741377767",
     "comment": "Faithful Squire // Kaiso, Memory of Loyalty [bok de] — localized art variant sharing an EN printing's collector number — absent from default_cards"
-  },
-  {
-    "illustration_id": "7f066ea5-f1aa-4772-81ee-925f2ec45772",
-    "frame": "2003",
-    "image_uri": "https://cards.scryfall.io/normal/front/2/3/230955b0-1a26-4697-8bf4-7275946a1207.jpg?1741830330",
-    "comment": "Woodwraith Strangler [rav zhs] — localized art variant sharing an EN printing's collector number — absent from default_cards"
   },
   {
     "illustration_id": "af1b560c-6f7c-41a0-ae02-ebbe24ec79f5",
@@ -60,28 +48,10 @@
     "comment": "Wear Away [chk de] — localized art variant sharing an EN printing's collector number — absent from default_cards"
   },
   {
-    "illustration_id": "bf2d8986-c11f-4745-8173-261da68d137d",
-    "frame": "1997",
-    "image_uri": "https://cards.scryfall.io/normal/front/c/a/ca26ded9-3216-468a-bc35-1a766dc9edd3.jpg?1641355996",
-    "comment": "Zombie Cannibal [ody zhs] — localized art variant sharing an EN printing's collector number — absent from default_cards"
-  },
-  {
-    "illustration_id": "d5f0d890-4407-4d57-918e-2c6217bc82ec",
-    "frame": "2003",
-    "image_uri": "https://cards.scryfall.io/normal/front/f/1/f1d9e78a-1f16-4224-91f1-21c2eab94a85.jpg?1741830108",
-    "comment": "Roofstalker Wight [rav zhs] — localized art variant sharing an EN printing's collector number — absent from default_cards"
-  },
-  {
     "illustration_id": "ea16f845-8913-4ac8-bd31-9b00d3d923b1",
     "frame": "2015",
     "image_uri": "https://cards.scryfall.io/normal/front/b/d/bd099d65-a1c7-4fdd-b313-034be6d9f2d0.jpg?1645618217",
     "comment": "Electrostatic Field [grn de] — localized art variant sharing an EN printing's collector number — absent from default_cards"
-  },
-  {
-    "illustration_id": "ea3b9d2f-be45-4c5b-8fc2-23b754afa4c6",
-    "frame": "1997",
-    "image_uri": "https://cards.scryfall.io/normal/front/3/2/32d5e2d4-b886-49c6-885f-dbe9c941fe82.jpg?1641355947",
-    "comment": "Famished Ghoul [ody zhs] — localized art variant sharing an EN printing's collector number — absent from default_cards"
   },
   {
     "illustration_id": "ee91097c-eab0-4ae4-919a-aa43357ffa5e",
@@ -94,11 +64,5 @@
     "frame": "2003",
     "image_uri": "https://cards.scryfall.io/normal/front/9/d/9d8b3aa0-cf92-4182-8565-a3bddf55de41.jpg?1562834608",
     "comment": "Swamp [isd ko] — localized art variant sharing an EN printing's collector number — absent from default_cards"
-  },
-  {
-    "illustration_id": "f3f2f37d-6447-4350-850f-1692404a2398",
-    "frame": "2015",
-    "image_uri": "https://cards.scryfall.io/normal/front/0/e/0e6d643b-b34b-4f4d-9476-e2627e4d9d8b.jpg?1718697018",
-    "comment": "Casualties of War [pip ja] — localized art variant sharing an EN printing's collector number — absent from default_cards"
   }
 ]

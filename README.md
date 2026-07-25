@@ -111,13 +111,18 @@ Known limitations:
 
 [`build_index.py`](build_index.py) runs daily via GitHub Actions:
 download the previous release → diff Scryfall's `default_cards` bulk for
-missing groups → fetch only those images (rate-limited, `small` size) → hash
-→ publish. An `algo_version` change triggers a full rebuild automatically.
+missing illustrations → fetch only those images (rate-limited, `small` size)
+→ hash → publish. Only paper printings are indexed (`games` must contain
+`paper`): digital-only arts (rebalanced Alchemy, Arena/MTGO exclusives)
+cannot be scanned. A change to the hash parameters (crop box or that filter)
+changes `crop_signature` and triggers a full rebuild automatically.
 
-[`extra_groups.json`](extra_groups.json) pins the handful of localized art
-variants that share an English printing's collector number and therefore
-never appear in `default_cards` (e.g. the Chinese-art Ravnica commons); the
-build fetches them independently of the bulk diff.
+[`extra_groups.json`](extra_groups.json) pins the localized art variants that
+share an English printing's collector number and therefore never appear in
+`default_cards`. Only variants whose illustration is *also* used by an
+English or French printing are pinned — an art exclusive to a language a
+consumer never imports would index a hash no card can ever reference (git
+history keeps the pruned ones if that ever changes).
 
 ## Legal
 
