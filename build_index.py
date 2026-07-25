@@ -54,7 +54,7 @@ def fetch_bulk(entry: dict, dest: Path) -> None:
 # Empreinte des paramètres qui changent les bits produits : tout écart avec
 # l'index précédent force un rebuild complet, sans toucher au numéro de
 # version (qui reste 1 jusqu'au lancement public).
-CROP_SIGNATURE = f"{ART_TOP},{ART_BOTTOM},{ART_LEFT},{ART_RIGHT}"
+CROP_SIGNATURE = f"{ART_TOP},{ART_BOTTOM},{ART_LEFT},{ART_RIGHT};paper"
 
 
 def open_index(path: Path) -> sqlite3.Connection:
@@ -77,9 +77,14 @@ def open_index(path: Path) -> sqlite3.Connection:
 
 
 def group_of(card: dict) -> tuple[str, str, str] | None:
-    # Un hash par ILLUSTRATION (algo v2) : le crop est interieur a l'art, les
-    # frames d'une meme illustration hashent pareil — la colonne frame reste
-    # dans le schema pour compat mais vaut "".
+    # Un hash par ILLUSTRATION : le crop est interieur a l'art, les frames
+    # d'une meme illustration hashent pareil — la colonne frame reste dans le
+    # schema pour compat mais vaut "".
+    # PAPIER UNIQUEMENT : les arts numeriques (Alchemy rebalanced, exclusives
+    # Arena/MTGO) ne peuvent pas etre scannes et polluent l'index — un art
+    # numerique gagnant le top-1 ne fournit aucun candidat au scanner.
+    if "paper" not in (card.get("games") or []):
+        return None
     illu = card.get("illustration_id")
     if illu is None and card.get("card_faces"):
         illu = card["card_faces"][0].get("illustration_id")
