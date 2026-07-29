@@ -29,7 +29,12 @@ from image_hash import (
 )
 
 BULK_TYPE = "default_cards"
-UA = {"User-Agent": "mtg-scanner-art-index/1.0 (+https://github.com/neotoxicfr/mtg-scanner-art-index)"}
+# Scryfall exige User-Agent ET Accept sur api.scryfall.com ; seul le premier
+# était envoyé.
+UA = {
+    "User-Agent": "mtg-scanner-art-index/1.0 (+https://github.com/neotoxicfr/mtg-scanner-art-index)",
+    "Accept": "application/json",
+}
 OUT = Path("art_hashes.sqlite")
 REQUEST_DELAY = 0.11
 
