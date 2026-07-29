@@ -8,6 +8,7 @@ hashes their art region with the reference implementation (image_hash.py).
 Output: art_hashes.sqlite (art_hashes table + meta table).
 """
 
+import gzip
 import json
 import sqlite3
 import sys
@@ -16,7 +17,6 @@ from pathlib import Path
 
 import cv2
 import httpx
-import ijson
 import numpy as np
 
 from image_hash import (
@@ -40,15 +40,43 @@ def bulk_entry() -> dict:
     return next(e for e in meta["data"] if e["type"] == BULK_TYPE)
 
 
+def bulk_url(entry: dict) -> str:
+    """Scryfall a remplacé `download_uri` (tableau JSON) par
+    `jsonl_download_uri` (.jsonl.gz, une carte par ligne) le 29 juillet 2026 :
+    le job échouait sur un KeyError. L'ancien champ reste lu au cas où."""
+    url = entry.get("jsonl_download_uri") or entry.get("download_uri")
+    if not url:
+        raise KeyError(f"aucune adresse de téléchargement dans {sorted(entry)}")
+    return url
+
+
 def fetch_bulk(entry: dict, dest: Path) -> None:
     with (
         httpx.Client(headers=UA, timeout=None, follow_redirects=True) as client,
-        client.stream("GET", entry["download_uri"]) as r,
+        client.stream("GET", bulk_url(entry)) as r,
     ):
         r.raise_for_status()
         with dest.open("wb") as f:
             for chunk in r.iter_bytes(1 << 20):
                 f.write(chunk)
+
+
+def cards_of(path: Path):
+    """Chaque carte du dump. Le fichier est servi en application/gzip, donc la
+    décompression est à notre charge ; une ligne illisible saute au lieu de
+    faire échouer un index de 50 000 illustrations."""
+    with path.open("rb") as probe:
+        gzipped = probe.read(2) == b"\x1f\x8b"
+    opener = gzip.open if gzipped else open
+    with opener(path, "rb") as f:
+        for line in f:
+            line = line.strip().rstrip(b",")
+            if not line or line in (b"[", b"]"):
+                continue
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
 
 
 # Empreinte des paramètres qui changent les bits produits : tout écart avec
@@ -137,16 +165,15 @@ def main() -> None:
         emit_output(0, total, stamp)
         return
     if bulk_changed:
-        bulk = Path("bulk_default.json")
+        bulk = Path("bulk_default.jsonl.gz")
         fetch_bulk(entry, bulk)
-        with bulk.open("rb") as f:
-            for card in ijson.items(f, "item"):
-                g = group_of(card)
-                if g is None:
-                    continue
-                illu, frame, uri = g
-                if (illu, frame) not in have and (illu, frame) not in todo:
-                    todo[(illu, frame)] = uri
+        for card in cards_of(bulk):
+            g = group_of(card)
+            if g is None:
+                continue
+            illu, frame, uri = g
+            if (illu, frame) not in have and (illu, frame) not in todo:
+                todo[(illu, frame)] = uri
         bulk.unlink(missing_ok=True)
     print(f"{len(have)} groups indexed, {len(todo)} missing")
 
