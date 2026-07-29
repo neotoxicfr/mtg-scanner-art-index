@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from build_index import bulk_url, cards_of  # noqa: E402
+from build_index import bulk_url, cards_of
 
 CARDS = [
     {"id": "a", "illustration_id": "i1", "frame": "2015"},
