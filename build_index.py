@@ -12,6 +12,7 @@ import gzip
 import json
 import sqlite3
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -37,11 +38,6 @@ UA = {
     "Accept": "application/json",
 }
 OUT = Path("art_hashes.sqlite")
-# Vingt téléchargements de front. Mesuré sur 128 vraies images : 8 fils tiennent
-# 37 img/s, 16 en font 111, 20 en font 125, et 32 retombent à 61 — au-delà la
-# concurrence se marche dessus. Reconstruction complète : 6,7 min contre 6 h
-# quand on s'imposait 0,11 s d'attente entre chaque image.
-IMAGE_WORKERS = 20
 
 
 def bulk_entry() -> dict:
@@ -105,7 +101,9 @@ def open_index(path: Path) -> sqlite3.Connection:
     # La colonne `frame` ne portait plus rien : le crop est interieur a l'art,
     # donc deux cadres de la meme illustration hashent pareil, et elle valait la
     # chaine vide pour les 50 245 lignes. Retiree sans refaire l'index.
-    if "frame" in {r[1] for r in conn.execute("PRAGMA table_info(art_hashes)").fetchall()}:
+    if "frame" in {
+        r[1] for r in conn.execute("PRAGMA table_info(art_hashes)").fetchall()
+    }:
         conn.executescript(
             "CREATE TABLE art_hashes_new (illustration_id TEXT NOT NULL PRIMARY KEY, "
             "hash BLOB NOT NULL);"
@@ -159,7 +157,9 @@ COLLECTION_BATCH = 75  # maximum documenté
 COLLECTION_DELAY = 0.55  # 2 requêtes/seconde, limite dure documentée
 
 
-def updated_card_ids(client: httpx.Client, since: str | None) -> tuple[list[str], str | None]:
+def updated_card_ids(
+    client: httpx.Client, since: str | None
+) -> tuple[list[str], str | None]:
     """Cartes dont l'image a changé depuis `since`, et la nouvelle marque.
 
     Sans marque connue (premier passage), on ne recalcule rien : on la pose,
@@ -193,7 +193,9 @@ def updated_card_ids(client: httpx.Client, since: str | None) -> tuple[list[str]
             break
     if capped:
         # Le dire : une troncature silencieuse se lirait comme « tout est à jour ».
-        print(f"manifest: stopped after {MANIFEST_MAX_PAGES} pages, rest picked up next build")
+        print(
+            f"manifest: stopped after {MANIFEST_MAX_PAGES} pages, rest picked up next build"
+        )
     return ids, newest
 
 
@@ -204,13 +206,168 @@ def hydrate(client: httpx.Client, card_ids: list[str]) -> dict[str, str]:
         if i:
             time.sleep(COLLECTION_DELAY)
         chunk = card_ids[i : i + COLLECTION_BATCH]
-        r = client.post(COLLECTION_URL, json={"identifiers": [{"id": cid} for cid in chunk]})
+        r = client.post(
+            COLLECTION_URL, json={"identifiers": [{"id": cid} for cid in chunk]}
+        )
         r.raise_for_status()
         for card in r.json().get("data") or []:
             g = group_of(card)
             if g is not None:
                 out[g[0]] = g[1]
     return out
+
+
+# --- Concurrence adaptative -------------------------------------------------
+# Le bon nombre de téléchargements simultanés dépend de la machine ET du réseau
+# du moment : mesuré ici, 8 fils tiennent 37 img/s, 16 en font 111, 20 en font
+# 125 et 32 retombent à 61. Un runner GitHub n'a ni la même latence ni le même
+# nombre de cœurs, donc une constante figée est fausse partout sauf à un
+# endroit. Le palier se cherche donc en marche.
+WORKERS_MIN = 4
+WORKERS_MAX = 64
+WORKERS_START = 12
+PROBE_SECONDS = 2.0  # durée d'une fenêtre de mesure
+# La marche suit l'échelle : partir de 12 et monter de 4 en 4 mettrait sept
+# fenêtres à atteindre un palier situé à 40, plausible sur une machine mieux
+# connectée. Un quart de la limite courante y va en trois.
+PROBE_STEP_RATIO = 4
+# Sous ce nombre d'images, explorer coûterait plus que ça ne rapporte : une
+# passe quotidienne n'a qu'une poignée d'illustrations à traiter.
+ADAPT_FROM = 200
+
+
+class Throttle:
+    """Concurrence réglable pendant l'exécution.
+
+    Les threads existent tous dès le départ ; c'est le nombre autorisé à
+    travailler EN MÊME TEMPS qui varie. Baisser la limite laisse simplement les
+    threads en trop attendre, sans les tuer ni perdre leur connexion."""
+
+    def __init__(self, limit: int) -> None:
+        self._cv = threading.Condition()
+        self._limit = limit
+        self._running = 0
+
+    @property
+    def limit(self) -> int:
+        return self._limit
+
+    def set_limit(self, value: int) -> None:
+        with self._cv:
+            self._limit = value
+            self._cv.notify_all()
+
+    def __enter__(self) -> "Throttle":
+        with self._cv:
+            while self._running >= self._limit:
+                self._cv.wait()
+            self._running += 1
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        with self._cv:
+            self._running -= 1
+            self._cv.notify()
+
+
+def hash_images(todo: dict[str, str], on_result) -> int:
+    """Télécharge et hashe toutes les images, en cherchant le débit maximal.
+
+    Montée par paliers tant que le débit progresse, demi-tour dès qu'il baisse
+    — c'est le sommet qu'on cherche, et il est plat : dépasser coûte autant que
+    rester en dessous. Une rafale d'erreurs divise la limite tout de suite,
+    parce qu'une erreur veut dire qu'on tape trop fort, pas qu'on va trop
+    lentement."""
+    items = list(todo.items())
+    if not items:
+        return 0
+    throttle = Throttle(min(WORKERS_START, len(items)))
+    done = errors = 0
+    counter = threading.Lock()
+
+    with httpx.Client(
+        headers=UA,
+        timeout=20,
+        limits=httpx.Limits(
+            max_connections=WORKERS_MAX * 2, max_keepalive_connections=WORKERS_MAX
+        ),
+    ) as client:
+
+        def hash_one(item: tuple[str, str]) -> tuple[str, bytes] | None:
+            nonlocal done, errors
+            illu, uri = item
+            with throttle:
+                try:
+                    r = client.get(uri)
+                    r.raise_for_status()
+                    img = cv2.imdecode(
+                        np.frombuffer(r.content, dtype=np.uint8), cv2.IMREAD_COLOR
+                    )
+                    if img is None:
+                        raise ValueError("undecodable")
+                    out = (illu, hash_card_art(img))
+                except (httpx.HTTPError, ValueError, cv2.error) as e:
+                    print(f"skip {illu}: {e}")
+                    with counter:
+                        errors += 1
+                        done += 1
+                    return None
+            with counter:
+                done += 1
+            return out
+
+        # Le contrôleur vit dans SON thread : mesurer le débit depuis la
+        # boucle qui consomme les résultats donnerait le rythme de l'ordre de
+        # soumission, pas celui du réseau — mesuré, il n'a vu qu'une fenêtre en
+        # 900 images et est resté bloqué à 44 img/s au lieu de 125.
+        stop = threading.Event()
+
+        def controller() -> None:
+            direction, best_rate = 1, 0.0
+            seen_done = seen_errors = 0
+            while not stop.wait(PROBE_SECONDS):
+                with counter:
+                    now_done, now_errors = done, errors
+                rate = (now_done - seen_done) / PROBE_SECONDS
+                window_errors = now_errors - seen_errors
+                seen_done, seen_errors = now_done, now_errors
+                limit = throttle.limit
+                if window_errors > max(3, (now_done - seen_done) // 20 + 3):
+                    # Une rafale d'erreurs dit qu'on tape trop fort, pas qu'on
+                    # va trop lentement : on recule franchement.
+                    limit, direction, best_rate = max(WORKERS_MIN, limit // 2), -1, 0.0
+                elif rate > best_rate * 1.03:
+                    best_rate = rate  # ça monte encore, on continue du même côté
+                else:
+                    direction = -direction
+                    # Le sommet est plat : on oublie un peu le record pour
+                    # pouvoir remonter si le réseau se dégage.
+                    best_rate *= 0.97
+                step = max(2, limit // PROBE_STEP_RATIO)
+                limit = max(WORKERS_MIN, min(WORKERS_MAX, limit + direction * step))
+                if limit != throttle.limit:
+                    throttle.set_limit(limit)
+                print(
+                    f"[{now_done}/{len(items)}] {rate:.0f} img/s, {throttle.limit} fils",
+                    flush=True,
+                )
+
+        pilot = None
+        if len(items) >= ADAPT_FROM:
+            pilot = threading.Thread(target=controller, daemon=True)
+            pilot.start()
+        try:
+            with ThreadPoolExecutor(max_workers=WORKERS_MAX) as pool:
+                for result in pool.map(hash_one, items):
+                    if result is not None:
+                        on_result(result)
+        finally:
+            stop.set()
+            if pilot is not None:
+                pilot.join(timeout=PROBE_SECONDS + 1)
+
+    print(f"{done - errors}/{len(items)} images hashées, {errors} ignorée(s)")
+    return done - errors
 
 
 def emit_output(new: int, groups: int, bulk_stamp: str = "") -> None:
@@ -227,7 +384,9 @@ def main() -> None:
     print(f"bulk {BULK_TYPE} dated {stamp}")
 
     conn = open_index(OUT)
-    have = {r[0] for r in conn.execute("SELECT illustration_id FROM art_hashes").fetchall()}
+    have = {
+        r[0] for r in conn.execute("SELECT illustration_id FROM art_hashes").fetchall()
+    }
 
     # Localized arts carry their own illustration_id but exist in no English
     # printing, so default_cards never lists them (JP Mystical Archive, WCS
@@ -237,11 +396,15 @@ def main() -> None:
     if extra_path.exists():
         for extra in json.loads(extra_path.read_text(encoding="utf-8")):
             if extra["illustration_id"] not in have:
-                todo[extra["illustration_id"]] = extra["image_uri"].replace("/normal/", "/small/")
+                todo[extra["illustration_id"]] = extra["image_uri"].replace(
+                    "/normal/", "/small/"
+                )
 
     # Illustrations re-scannées : elles sont déjà dans l'index, avec une
     # empreinte devenue fausse. Sans ça, un hash n'était jamais recalculé.
-    row = conn.execute("SELECT value FROM meta WHERE key='image_updated_through'").fetchone()
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key='image_updated_through'"
+    ).fetchone()
     watermark = row[0] if row and row[0] else None
     with httpx.Client(headers=UA, timeout=30) as api:
         changed, newest = updated_card_ids(api, watermark)
@@ -251,12 +414,15 @@ def main() -> None:
 
     # Skip the 450MB bulk entirely when it is unchanged (quiet days); pinned
     # extras are still fetched above if any are missing.
-    prev_stamp = conn.execute("SELECT value FROM meta WHERE key='bulk_updated_at'").fetchone()
+    prev_stamp = conn.execute(
+        "SELECT value FROM meta WHERE key='bulk_updated_at'"
+    ).fetchone()
     bulk_changed = prev_stamp is None or prev_stamp[0] != stamp
     if not bulk_changed and not todo:
         total = conn.execute("SELECT count(*) FROM art_hashes").fetchone()[0]
         conn.execute(
-            "INSERT OR REPLACE INTO meta VALUES ('image_updated_through', ?)", (newest or "",)
+            "INSERT OR REPLACE INTO meta VALUES ('image_updated_through', ?)",
+            (newest or "",),
         )
         conn.commit()
         print("bulk unchanged — index already current")
@@ -275,42 +441,16 @@ def main() -> None:
         bulk.unlink(missing_ok=True)
     print(f"{len(have)} groups indexed, {len(todo)} missing")
 
-    # Les images viennent de cards.scryfall.io, une origine de fichiers dont la
-    # doc dit explicitement qu'elle n'a AUCUNE limite de débit. On attendait
-    # 0,11 s entre chacune : sur une reconstruction complète de 50 000
-    # illustrations, une heure et demie passée à dormir.
-    done = 0
-    batch = []
-    with httpx.Client(
-        headers=UA,
-        timeout=20,
-        limits=httpx.Limits(max_connections=IMAGE_WORKERS * 2,
-                            max_keepalive_connections=IMAGE_WORKERS),
-    ) as client:
+    batch: list[tuple[str, bytes]] = []
 
-        def hash_one(item: tuple[str, str]) -> tuple[str, bytes] | None:
-            illu, uri = item
-            try:
-                r = client.get(uri)
-                r.raise_for_status()
-                img = cv2.imdecode(np.frombuffer(r.content, dtype=np.uint8), cv2.IMREAD_COLOR)
-                if img is None:
-                    raise ValueError("undecodable")
-                return illu, hash_card_art(img)
-            except (httpx.HTTPError, ValueError, cv2.error) as e:
-                print(f"skip {illu}: {e}")
-                return None
+    def store(result: tuple[str, bytes]) -> None:
+        batch.append(result)
+        if len(batch) >= 100:
+            conn.executemany("INSERT OR REPLACE INTO art_hashes VALUES (?, ?)", batch)
+            conn.commit()
+            batch.clear()
 
-        with ThreadPoolExecutor(max_workers=IMAGE_WORKERS) as pool:
-            for result in pool.map(hash_one, list(todo.items())):
-                done += 1
-                if result is not None:
-                    batch.append(result)
-                if len(batch) >= 100:
-                    conn.executemany("INSERT OR REPLACE INTO art_hashes VALUES (?, ?)", batch)
-                    conn.commit()
-                    batch.clear()
-                    print(f"[{done}/{len(todo)}]", flush=True)
+    done = hash_images(todo, store)
     if batch:
         conn.executemany("INSERT OR REPLACE INTO art_hashes VALUES (?, ?)", batch)
 
@@ -327,7 +467,12 @@ def main() -> None:
     )
     conn.commit()
     conn.close()
-    summary = {"groups": total, "new": done, "algo_version": HASH_ALGO_VERSION, "bulk": stamp}
+    summary = {
+        "groups": total,
+        "new": done,
+        "algo_version": HASH_ALGO_VERSION,
+        "bulk": stamp,
+    }
     print(json.dumps(summary))
     emit_output(done, total, stamp)
 
