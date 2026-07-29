@@ -3,6 +3,7 @@
 
 import gzip
 import json
+import time
 import sys
 from pathlib import Path
 
@@ -125,3 +126,65 @@ def test_hydrate_batches_by_seventy_five(monkeypatch):
     got = build_index.hydrate(client, [f"id{i}" for i in range(80)])
     assert [len(c) for c in client.posts] == [75, 5]
     assert got == {"i1": "https://cards.scryfall.io/small/x.jpg"}
+
+
+def test_the_throttle_can_shrink_and_grow_while_running():
+    """La limite change en marche : les threads en trop attendent, ils ne
+    meurent pas — sinon on perdrait leur connexion à chaque ajustement."""
+    import threading
+
+    from build_index import Throttle
+
+    t = Throttle(2)
+    inside = []
+    release = threading.Event()
+
+    def work():
+        with t:
+            inside.append(1)
+            release.wait(2)
+
+    threads = [threading.Thread(target=work) for _ in range(4)]
+    for th in threads:
+        th.start()
+    time.sleep(0.1)
+    assert len(inside) == 2, "la limite de départ n'est pas respectée"
+
+    t.set_limit(4)
+    time.sleep(0.1)
+    assert len(inside) == 4, "élargir la limite doit débloquer les threads en attente"
+
+    release.set()
+    for th in threads:
+        th.join(2)
+
+
+def test_a_small_batch_does_not_bother_adapting(monkeypatch):
+    """Une passe quotidienne n'a qu'une poignée d'images : sonder le débit
+    coûterait plus que ça ne rapporte. Le contrôleur est le seul à toucher la
+    limite, donc une limite qui ne bouge pas prouve qu'il ne tourne pas."""
+    import build_index
+
+    adjusted = []
+    monkeypatch.setattr(
+        build_index.Throttle, "set_limit", lambda self, v: adjusted.append(v)
+    )
+    monkeypatch.setattr(build_index, "PROBE_SECONDS", 0.05)
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, uri):
+            time.sleep(0.02)
+            raise build_index.httpx.HTTPError("hors ligne")
+
+    monkeypatch.setattr(build_index.httpx, "Client", Client)
+    build_index.hash_images({f"i{i}": "u" for i in range(5)}, lambda r: None)
+    assert adjusted == [], "aucun réglage ne doit avoir lieu sous le seuil"
