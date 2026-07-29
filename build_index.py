@@ -2,7 +2,7 @@
 
 Downloads the Scryfall `default_cards` bulk (covers every printing, including
 language-exclusive ones), diffs its illustration groups against
-the previous index, fetches only the missing card images (rate-limited) and
+the previous index, fetches only the missing or re-illustrated card images and
 hashes their art region with the reference implementation (image_hash.py).
 
 Output: art_hashes.sqlite (art_hashes table + meta table).
@@ -37,7 +37,11 @@ UA = {
     "Accept": "application/json",
 }
 OUT = Path("art_hashes.sqlite")
-IMAGE_WORKERS = 8
+# Vingt téléchargements de front. Mesuré sur 128 vraies images : 8 fils tiennent
+# 37 img/s, 16 en font 111, 20 en font 125, et 32 retombent à 61 — au-delà la
+# concurrence se marche dessus. Reconstruction complète : 6,7 min contre 6 h
+# quand on s'imposait 0,11 s d'attente entre chaque image.
+IMAGE_WORKERS = 20
 
 
 def bulk_entry() -> dict:
@@ -277,7 +281,12 @@ def main() -> None:
     # illustrations, une heure et demie passée à dormir.
     done = 0
     batch = []
-    with httpx.Client(headers=UA, timeout=20) as client:
+    with httpx.Client(
+        headers=UA,
+        timeout=20,
+        limits=httpx.Limits(max_connections=IMAGE_WORKERS * 2,
+                            max_keepalive_connections=IMAGE_WORKERS),
+    ) as client:
 
         def hash_one(item: tuple[str, str]) -> tuple[str, bytes] | None:
             illu, uri = item
