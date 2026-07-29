@@ -1,7 +1,7 @@
 """Build/update the MTG art-hash index published as a GitHub release.
 
 Downloads the Scryfall `default_cards` bulk (covers every printing, including
-language-exclusive ones), diffs its (illustration_id, frame) groups against
+language-exclusive ones), diffs its illustration groups against
 the previous index, fetches only the missing card images (rate-limited) and
 hashes their art region with the reference implementation (image_hash.py).
 
@@ -13,6 +13,7 @@ import json
 import sqlite3
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -36,7 +37,7 @@ UA = {
     "Accept": "application/json",
 }
 OUT = Path("art_hashes.sqlite")
-REQUEST_DELAY = 0.11
+IMAGE_WORKERS = 8
 
 
 def bulk_entry() -> dict:
@@ -93,10 +94,22 @@ CROP_SIGNATURE = f"{ART_TOP},{ART_BOTTOM},{ART_LEFT},{ART_RIGHT};paper"
 def open_index(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.executescript(
-        "CREATE TABLE IF NOT EXISTS art_hashes (illustration_id TEXT NOT NULL, "
-        "frame TEXT NOT NULL, hash BLOB NOT NULL, PRIMARY KEY (illustration_id, frame));"
+        "CREATE TABLE IF NOT EXISTS art_hashes (illustration_id TEXT NOT NULL PRIMARY KEY, "
+        "hash BLOB NOT NULL);"
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);"
     )
+    # La colonne `frame` ne portait plus rien : le crop est interieur a l'art,
+    # donc deux cadres de la meme illustration hashent pareil, et elle valait la
+    # chaine vide pour les 50 245 lignes. Retiree sans refaire l'index.
+    if "frame" in {r[1] for r in conn.execute("PRAGMA table_info(art_hashes)").fetchall()}:
+        conn.executescript(
+            "CREATE TABLE art_hashes_new (illustration_id TEXT NOT NULL PRIMARY KEY, "
+            "hash BLOB NOT NULL);"
+            "INSERT OR IGNORE INTO art_hashes_new SELECT illustration_id, hash FROM art_hashes;"
+            "DROP TABLE art_hashes;"
+            "ALTER TABLE art_hashes_new RENAME TO art_hashes;"
+        )
+        conn.commit()
     algo = conn.execute("SELECT value FROM meta WHERE key='algo_version'").fetchone()
     crop = conn.execute("SELECT value FROM meta WHERE key='crop_signature'").fetchone()
     stale_algo = algo is not None and int(algo[0]) != HASH_ALGO_VERSION
@@ -109,10 +122,9 @@ def open_index(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def group_of(card: dict) -> tuple[str, str, str] | None:
-    # Un hash par ILLUSTRATION : le crop est interieur a l'art, les frames
-    # d'une meme illustration hashent pareil — la colonne frame reste dans le
-    # schema pour compat mais vaut "".
+def group_of(card: dict) -> tuple[str, str] | None:
+    # Un hash par ILLUSTRATION : le crop est interieur a l'art, donc deux
+    # cadres de la meme illustration donnent la meme empreinte.
     # PAPIER UNIQUEMENT : les arts numeriques (Alchemy rebalanced, exclusives
     # Arena/MTGO) ne peuvent pas etre scannes et polluent l'index — un art
     # numerique gagnant le top-1 ne fournit aucun candidat au scanner.
@@ -127,7 +139,74 @@ def group_of(card: dict) -> tuple[str, str, str] | None:
     uri = images.get("small")
     if illu is None or uri is None:
         return None
-    return illu, "", uri
+    return illu, uri
+
+
+# --- Illustrations re-scannées par Scryfall ---------------------------------
+# Un hash déjà stocké n'était jamais recalculé : quand Scryfall remplace le scan
+# d'une carte, l'index gardait l'ancienne empreinte pour toujours. Le manifeste
+# trié par date de mise à jour d'image dit lesquelles ont bougé, et on s'arrête
+# dès qu'on repasse sous la marque du dernier build.
+MANIFEST_URL = "https://api.scryfall.com/cards/manifest"
+MANIFEST_DELAY = 6.5  # 10 requêtes/minute, limite dure documentée
+MANIFEST_MAX_PAGES = 5
+COLLECTION_URL = "https://api.scryfall.com/cards/collection"
+COLLECTION_BATCH = 75  # maximum documenté
+COLLECTION_DELAY = 0.55  # 2 requêtes/seconde, limite dure documentée
+
+
+def updated_card_ids(client: httpx.Client, since: str | None) -> tuple[list[str], str | None]:
+    """Cartes dont l'image a changé depuis `since`, et la nouvelle marque.
+
+    Sans marque connue (premier passage), on ne recalcule rien : on la pose,
+    sinon ce passage re-hasherait la base entière pour rien."""
+    ids: list[str] = []
+    newest: str | None = None
+    capped = True
+    for page in range(1, MANIFEST_MAX_PAGES + 1):
+        if page > 1:
+            time.sleep(MANIFEST_DELAY)
+        r = client.get(MANIFEST_URL, params={"order": "imageupdated", "page": page})
+        r.raise_for_status()
+        body = r.json()
+        entries = body.get("data") or []
+        if not entries:
+            capped = False
+            break
+        if newest is None:
+            newest = entries[0].get("image_updated_at")
+        if since is None:
+            return [], newest
+        stop = False
+        for e in entries:
+            stamp = e.get("image_updated_at")
+            if stamp is None or stamp <= since:
+                stop = True
+                break
+            ids.append(e["id"])
+        if stop or not body.get("has_more"):
+            capped = False
+            break
+    if capped:
+        # Le dire : une troncature silencieuse se lirait comme « tout est à jour ».
+        print(f"manifest: stopped after {MANIFEST_MAX_PAGES} pages, rest picked up next build")
+    return ids, newest
+
+
+def hydrate(client: httpx.Client, card_ids: list[str]) -> dict[str, str]:
+    """(illustration_id -> image) de ces cartes, par paquets de 75."""
+    out: dict[str, str] = {}
+    for i in range(0, len(card_ids), COLLECTION_BATCH):
+        if i:
+            time.sleep(COLLECTION_DELAY)
+        chunk = card_ids[i : i + COLLECTION_BATCH]
+        r = client.post(COLLECTION_URL, json={"identifiers": [{"id": cid} for cid in chunk]})
+        r.raise_for_status()
+        for card in r.json().get("data") or []:
+            g = group_of(card)
+            if g is not None:
+                out[g[0]] = g[1]
+    return out
 
 
 def emit_output(new: int, groups: int, bulk_stamp: str = "") -> None:
@@ -144,21 +223,27 @@ def main() -> None:
     print(f"bulk {BULK_TYPE} dated {stamp}")
 
     conn = open_index(OUT)
-    have = {
-        (r[0], r[1])
-        for r in conn.execute("SELECT illustration_id, frame FROM art_hashes").fetchall()
-    }
+    have = {r[0] for r in conn.execute("SELECT illustration_id FROM art_hashes").fetchall()}
 
     # Localized arts carry their own illustration_id but exist in no English
     # printing, so default_cards never lists them (JP Mystical Archive, WCS
     # promos, Phyrexian SLDs...). extra_groups.json pins them explicitly.
-    todo: dict[tuple[str, str], str] = {}
+    todo: dict[str, str] = {}
     extra_path = Path("extra_groups.json")
     if extra_path.exists():
         for extra in json.loads(extra_path.read_text(encoding="utf-8")):
-            key = (extra["illustration_id"], "")
-            if key not in have:
-                todo[key] = extra["image_uri"].replace("/normal/", "/small/")
+            if extra["illustration_id"] not in have:
+                todo[extra["illustration_id"]] = extra["image_uri"].replace("/normal/", "/small/")
+
+    # Illustrations re-scannées : elles sont déjà dans l'index, avec une
+    # empreinte devenue fausse. Sans ça, un hash n'était jamais recalculé.
+    row = conn.execute("SELECT value FROM meta WHERE key='image_updated_through'").fetchone()
+    watermark = row[0] if row and row[0] else None
+    with httpx.Client(headers=UA, timeout=30) as api:
+        changed, newest = updated_card_ids(api, watermark)
+        if changed:
+            print(f"{len(changed)} card(s) reillustrated since {watermark}")
+            todo.update(hydrate(api, changed))
 
     # Skip the 450MB bulk entirely when it is unchanged (quiet days); pinned
     # extras are still fetched above if any are missing.
@@ -166,6 +251,10 @@ def main() -> None:
     bulk_changed = prev_stamp is None or prev_stamp[0] != stamp
     if not bulk_changed and not todo:
         total = conn.execute("SELECT count(*) FROM art_hashes").fetchone()[0]
+        conn.execute(
+            "INSERT OR REPLACE INTO meta VALUES ('image_updated_through', ?)", (newest or "",)
+        )
+        conn.commit()
         print("bulk unchanged — index already current")
         emit_output(0, total, stamp)
         return
@@ -176,36 +265,45 @@ def main() -> None:
             g = group_of(card)
             if g is None:
                 continue
-            illu, frame, uri = g
-            if (illu, frame) not in have and (illu, frame) not in todo:
-                todo[(illu, frame)] = uri
+            illu, uri = g
+            if illu not in have and illu not in todo:
+                todo[illu] = uri
         bulk.unlink(missing_ok=True)
     print(f"{len(have)} groups indexed, {len(todo)} missing")
 
+    # Les images viennent de cards.scryfall.io, une origine de fichiers dont la
+    # doc dit explicitement qu'elle n'a AUCUNE limite de débit. On attendait
+    # 0,11 s entre chacune : sur une reconstruction complète de 50 000
+    # illustrations, une heure et demie passée à dormir.
     done = 0
     batch = []
     with httpx.Client(headers=UA, timeout=20) as client:
-        for (illu, frame), uri in todo.items():
+
+        def hash_one(item: tuple[str, str]) -> tuple[str, bytes] | None:
+            illu, uri = item
             try:
                 r = client.get(uri)
                 r.raise_for_status()
                 img = cv2.imdecode(np.frombuffer(r.content, dtype=np.uint8), cv2.IMREAD_COLOR)
                 if img is None:
                     raise ValueError("undecodable")
-                batch.append((illu, frame, hash_card_art(img)))
+                return illu, hash_card_art(img)
             except (httpx.HTTPError, ValueError, cv2.error) as e:
-                print(f"skip {illu}/{frame}: {e}")
-            done += 1
-            if len(batch) >= 100:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO art_hashes VALUES (?, ?, ?)", batch
-                )
-                conn.commit()
-                batch.clear()
-                print(f"[{done}/{len(todo)}]", flush=True)
-            time.sleep(REQUEST_DELAY)
+                print(f"skip {illu}: {e}")
+                return None
+
+        with ThreadPoolExecutor(max_workers=IMAGE_WORKERS) as pool:
+            for result in pool.map(hash_one, list(todo.items())):
+                done += 1
+                if result is not None:
+                    batch.append(result)
+                if len(batch) >= 100:
+                    conn.executemany("INSERT OR REPLACE INTO art_hashes VALUES (?, ?)", batch)
+                    conn.commit()
+                    batch.clear()
+                    print(f"[{done}/{len(todo)}]", flush=True)
     if batch:
-        conn.executemany("INSERT OR REPLACE INTO art_hashes VALUES (?, ?, ?)", batch)
+        conn.executemany("INSERT OR REPLACE INTO art_hashes VALUES (?, ?)", batch)
 
     total = conn.execute("SELECT count(*) FROM art_hashes").fetchone()[0]
     conn.executemany(
@@ -215,6 +313,7 @@ def main() -> None:
             ("crop_signature", CROP_SIGNATURE),
             ("groups", str(total)),
             ("bulk_updated_at", stamp),
+            ("image_updated_through", newest or watermark or ""),
         ],
     )
     conn.commit()
