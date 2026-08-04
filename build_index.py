@@ -21,6 +21,7 @@ import cv2
 import httpx
 import numpy as np
 
+from embed import embed_card, quantize
 from image_hash import (
     ART_BOTTOM,
     ART_LEFT,
@@ -223,6 +224,10 @@ def hydrate(client: httpx.Client, card_ids: list[str]) -> dict[str, str]:
 # 125 et 32 retombent à 61. Un runner GitHub n'a ni la même latence ni le même
 # nombre de cœurs, donc une constante figée est fausse partout sauf à un
 # endroit. Le palier se cherche donc en marche.
+# Une inférence à la fois : la session ONNX partage ses threads intra-op, la
+# faire courir depuis vingt fils la ferait se battre contre elle-même.
+_EMBED_LOCK = threading.Lock()
+
 WORKERS_MIN = 4
 WORKERS_MAX = 64
 WORKERS_START = 12
@@ -305,7 +310,9 @@ def hash_images(todo: dict[str, str], on_result) -> int:
                     )
                     if img is None:
                         raise ValueError("undecodable")
-                    out = (illu, hash_card_art(img))
+                    with _EMBED_LOCK:
+                        vec = embed_card(img)
+                    out = (illu, hash_card_art(img), quantize(vec))
                 except (httpx.HTTPError, ValueError, cv2.error) as e:
                     print(f"skip {illu}: {e}")
                     with counter:
