@@ -24,7 +24,10 @@ def _jsonl() -> bytes:
 
 
 def test_url_prefers_the_jsonl_dump():
-    assert bulk_url({"jsonl_download_uri": "https://x/a.jsonl.gz"}) == "https://x/a.jsonl.gz"
+    assert (
+        bulk_url({"jsonl_download_uri": "https://x/a.jsonl.gz"})
+        == "https://x/a.jsonl.gz"
+    )
     assert bulk_url({"download_uri": "https://x/a.json"}) == "https://x/a.json"
     with pytest.raises(KeyError):
         bulk_url({"updated_at": "2026-07-29T00:00:00Z"})
@@ -85,7 +88,9 @@ def test_first_run_only_sets_the_watermark(monkeypatch):
     """Sans marque, tout re-hasher serait absurde : on pose la marque."""
     from build_index import updated_card_ids
 
-    client = FakeClient([_page([{"id": "a", "image_updated_at": "2026-07-29T10:00:00Z"}])])
+    client = FakeClient(
+        [_page([{"id": "a", "image_updated_at": "2026-07-29T10:00:00Z"}])]
+    )
     ids, newest = updated_card_ids(client, None)
     assert ids == []
     assert newest == "2026-07-29T10:00:00Z"
@@ -188,3 +193,22 @@ def test_a_small_batch_does_not_bother_adapting(monkeypatch):
     monkeypatch.setattr(build_index.httpx, "Client", Client)
     build_index.hash_images({f"i{i}": "u" for i in range(5)}, lambda r: None)
     assert adjusted == [], "aucun réglage ne doit avoir lieu sous le seuil"
+
+
+def test_quantize_uses_the_full_int8_range():
+    """Sur un vecteur unitaire en 384 dimensions, multiplier par 127 ne
+    laisserait que six niveaux utiles : l'échelle se prend sur la composante
+    max, la renormalisation au déchargement absorbe le facteur."""
+    import numpy as np
+
+    from embed import quantize
+
+    rng = np.random.default_rng(1)
+    v = rng.normal(size=384).astype(np.float32)
+    v /= np.linalg.norm(v)
+    q = np.frombuffer(quantize(v), dtype=np.int8)
+    assert q.shape == (384,)
+    assert int(np.abs(q).max()) == 127  # la plage est pleinement utilisée
+    back = q.astype(np.float32)
+    back /= np.linalg.norm(back)
+    assert float(v @ back) > 0.9999
