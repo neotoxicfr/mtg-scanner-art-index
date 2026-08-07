@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write
 
+# Un run manuel (workflow_dispatch) et le cron ne doivent pas se battre sur la
+# release `latest` en même temps ; on sérialise sans annuler celui en cours.
+concurrency:
+  group: art-hash-index
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,23 +40,37 @@ jobs:
 
       - name: Publish release
         if: steps.build.outputs.new != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passés par ENV, pas interpolés dans le shell : les sorties du build
+          # ne peuvent pas casser (ou injecter) la commande.
+          ALGO: ${{ steps.build.outputs.algo }}
+          EMBED: ${{ steps.build.outputs.embed }}
+          GROUPS: ${{ steps.build.outputs.groups }}
+          NEW: ${{ steps.build.outputs.new }}
+          BULK: ${{ steps.build.outputs.bulk }}
         run: |
-          gh release delete latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          sha=$(sha256sum art_hashes.sqlite | cut -d' ' -f1)
+          title="Art-hash index v${ALGO} — ${GROUPS} groups (${BULK})"
           {
             echo "| | |"
             echo "|---|---|"
-            echo "| Groups | ${{ steps.build.outputs.groups }} |"
-            echo "| New this run | ${{ steps.build.outputs.new }} |"
-            echo "| Hash algo | v${{ steps.build.outputs.algo }} |"
-            echo "| Scryfall bulk | ${{ steps.build.outputs.bulk }} |"
+            echo "| Groups | ${GROUPS} |"
+            echo "| New this run | ${NEW} |"
+            echo "| Hash algo | v${ALGO} |"
+            echo "| Embed version | v${EMBED} |"
+            echo "| Scryfall bulk | ${BULK} |"
+            echo "| SHA-256 | \`${sha}\` |"
             echo ""
-            echo "One 1024-bit hybrid dHash per (illustration_id, frame) group."
-            echo "Check \`meta.algo_version\` before use — see the README for the"
-            echo "exact hash specification and a consumer example."
+            echo "One 1024-bit hybrid dHash per illustration_id, plus a DINOv2"
+            echo "embedding. Verify the asset against the SHA-256 above, and check"
+            echo "\`meta.algo_version\` / \`meta.embed_version\` before use — see the"
+            echo "README for the exact specification and a consumer example."
           } > notes.md
-          gh release create latest art_hashes.sqlite \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Art-hash index v${{ steps.build.outputs.algo }} — ${{ steps.build.outputs.groups }} groups (${{ steps.build.outputs.bulk }})" \
-            --notes-file notes.md
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Publication ATOMIQUE : jamais de delete-avant-create (qui laissait
+          # les consommateurs SANS release si create échouait ensuite). La
+          # release et le tag `latest` persistent ; seul l'asset est remplacé
+          # en place via --clobber.
+          gh release create latest --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file notes.md \
+            || gh release edit latest --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file notes.md
+          gh release upload latest art_hashes.sqlite --repo "$GITHUB_REPOSITORY" --clobber

@@ -21,6 +21,26 @@ def test_hash_shape_and_determinism():
     assert h1 == h2
 
 
+# Vecteur GOLDEN : les octets exacts de l'algo v1 sur une image à graine fixe
+# (PCG64, identique CI-ubuntu et app-Windows). HASH_ALGO_VERSION porte la
+# consigne « bump si les bits changent » ; ce test l'APPLIQUE. Tout écart
+# (interpolation, ordre des plans, bornes de crop, packbits) casse la CI et
+# force soit un rollback, soit un bump conscient de la version + de ce vecteur.
+# L'index publié consommé par l'app en dépend : une dérive silencieuse
+# casserait la reconnaissance des ~50 000 illustrations sans erreur.
+_GOLDEN_SEED = 20260807
+_GOLDEN_HEX = (
+    "a8a43025406928eba5c4b46c45a52c4d95612c9a95cb2719b6b554d954bb4ac9"
+    "9c931c40caa94a2c75b19598a8e98d25b24d4dd5212193559425ab6b51198b71"
+    "acacb2a5c46d296ba14cb46445a52ac595652e9ad58ba489b69d5cd974ab4ad5"
+    "31765d55712aacabc5d38379532969284ca38c2332512a293532d19056949baa"
+)
+
+
+def test_hash_matches_frozen_golden_vector():
+    assert hash_card_art(_card(_GOLDEN_SEED)).hex() == _GOLDEN_HEX
+
+
 def test_distinct_images_are_far():
     h1 = hash_card_art(_card(1))
     h2 = hash_card_art(_card(2))
