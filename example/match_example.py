@@ -24,9 +24,11 @@ def main(image_path: str) -> None:
     meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
     assert int(meta["algo_version"]) == HASH_ALGO_VERSION, "algo mismatch — update image_hash.py"
 
-    rows = conn.execute("SELECT illustration_id, frame, hash FROM art_hashes").fetchall()
-    keys = [(r[0], r[1]) for r in rows]
-    hashes = np.frombuffer(b"".join(r[2] for r in rows), dtype=np.uint8)
+    # Un hash par illustration_id : la colonne `frame` a été retirée (le crop est
+    # intérieur à l'art, deux cadres de la même illustration hashent pareil).
+    rows = conn.execute("SELECT illustration_id, hash FROM art_hashes").fetchall()
+    keys = [r[0] for r in rows]
+    hashes = np.frombuffer(b"".join(r[1] for r in rows), dtype=np.uint8)
     hashes = hashes.reshape(len(rows), HASH_BYTES)
     print(f"index: {len(keys)} groups (bulk {meta.get('bulk_updated_at')})")
 
@@ -35,12 +37,8 @@ def main(image_path: str) -> None:
         raise SystemExit(f"cannot read {image_path}")
     distances = min_distances(hash_scan_art(image), hashes)
     for i in np.argsort(distances)[:5]:
-        illustration_id, frame = keys[i]
-        print(f"  {distances[i]:>4} bits  illustration={illustration_id}  frame={frame}")
-    print(
-        "Map illustration_id+frame back to printings via Scryfall data "
-        "(each card object carries both fields)."
-    )
+        print(f"  {distances[i]:>4} bits  illustration={keys[i]}")
+    print("Map illustration_id back to printings via Scryfall data.")
 
 
 if __name__ == "__main__":

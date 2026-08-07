@@ -21,7 +21,7 @@ import cv2
 import httpx
 import numpy as np
 
-from embed import embed_card, quantize
+from embed import EMBED_VERSION, embed_card, quantize
 from image_hash import (
     ART_BOTTOM,
     ART_LEFT,
@@ -97,6 +97,10 @@ def open_index(path: Path) -> sqlite3.Connection:
     conn.executescript(
         "CREATE TABLE IF NOT EXISTS art_hashes (illustration_id TEXT NOT NULL PRIMARY KEY, "
         "hash BLOB NOT NULL);"
+        # Embedding DINOv2 int8 (384 octets) par illustration, écrit en même
+        # temps que le hash : une illustration n'est « faite » qu'avec les deux.
+        "CREATE TABLE IF NOT EXISTS art_embeddings (illustration_id TEXT NOT NULL PRIMARY KEY, "
+        "embedding BLOB NOT NULL);"
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);"
     )
     # La colonne `frame` ne portait plus rien : le crop est interieur a l'art,
@@ -115,11 +119,21 @@ def open_index(path: Path) -> sqlite3.Connection:
         conn.commit()
     algo = conn.execute("SELECT value FROM meta WHERE key='algo_version'").fetchone()
     crop = conn.execute("SELECT value FROM meta WHERE key='crop_signature'").fetchone()
+    embed = conn.execute("SELECT value FROM meta WHERE key='embed_version'").fetchone()
     stale_algo = algo is not None and int(algo[0]) != HASH_ALGO_VERSION
     stale_crop = crop is None or crop[0] != CROP_SIGNATURE
-    if (algo is not None or crop is not None) and (stale_algo or stale_crop):
-        print(f"hash params changed (algo {algo} crop {crop}): full rebuild")
+    # embed_version absente = index d'avant les embeddings (ou d'une version
+    # d'octets incompatible) : on re-hashe tout une fois pour reposer hash ET
+    # embedding ensemble. Le garde (algo/crop non nuls) épargne un DB vierge.
+    stale_embed = embed is None or int(embed[0]) != EMBED_VERSION
+    if (algo is not None or crop is not None) and (
+        stale_algo or stale_crop or stale_embed
+    ):
+        print(
+            f"hash params changed (algo {algo} crop {crop} embed {embed}): full rebuild"
+        )
         conn.execute("DELETE FROM art_hashes")
+        conn.execute("DELETE FROM art_embeddings")
         conn.execute("DELETE FROM meta")
         conn.commit()
     return conn
@@ -313,7 +327,10 @@ def hash_images(todo: dict[str, str], on_result) -> int:
                     with _EMBED_LOCK:
                         vec = embed_card(img)
                     out = (illu, hash_card_art(img), quantize(vec))
-                except (httpx.HTTPError, ValueError, cv2.error) as e:
+                except Exception as e:
+                    # Une seule image ratée (réseau, décodage, OU inférence ONNX)
+                    # ne doit pas tuer un build de 50 000 : on la saute. Les
+                    # erreurs ONNX n'entraient pas dans l'ancien tuple étroit.
                     print(f"skip {illu}: {e}")
                     with counter:
                         errors += 1
@@ -377,12 +394,32 @@ def hash_images(todo: dict[str, str], on_result) -> int:
     return done - errors
 
 
+def write_batch(
+    conn: sqlite3.Connection, batch: list[tuple[str, bytes, bytes]]
+) -> None:
+    """Écrit hash ET embedding dans le même commit : les deux tables restent
+    couplées (hash présent ⇒ embedding présent). Le hash et l'embedding partent
+    dans deux tables distinctes — un seul INSERT à trois valeurs sur art_hashes
+    (deux colonnes) plantait tout le build en silence."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO art_hashes VALUES (?, ?)",
+        [(illu, h) for illu, h, _ in batch],
+    )
+    conn.executemany(
+        "INSERT OR REPLACE INTO art_embeddings VALUES (?, ?)",
+        [(illu, emb) for illu, _, emb in batch],
+    )
+    conn.commit()
+
+
 def emit_output(new: int, groups: int, bulk_stamp: str = "") -> None:
     github_output = Path(sys.argv[1]) if len(sys.argv) > 1 else None
     if github_output:
         with github_output.open("a", encoding="utf-8") as f:
             f.write(f"new={new}\ngroups={groups}\n")
-            f.write(f"algo={HASH_ALGO_VERSION}\nbulk={bulk_stamp[:10]}\n")
+            f.write(
+                f"algo={HASH_ALGO_VERSION}\nembed={EMBED_VERSION}\nbulk={bulk_stamp[:10]}\n"
+            )
 
 
 def main() -> None:
@@ -448,24 +485,42 @@ def main() -> None:
         bulk.unlink(missing_ok=True)
     print(f"{len(have)} groups indexed, {len(todo)} missing")
 
-    batch: list[tuple[str, bytes]] = []
+    # (illustration_id, hash, embedding) : les deux tables sont écrites dans le
+    # même commit, donc un hash présent implique toujours son embedding — le
+    # set `have` (lu sur art_hashes) reste une vérité pour « déjà fait ».
+    batch: list[tuple[str, bytes, bytes]] = []
 
-    def store(result: tuple[str, bytes]) -> None:
+    def store(result: tuple[str, bytes, bytes]) -> None:
         batch.append(result)
         if len(batch) >= 100:
-            conn.executemany("INSERT OR REPLACE INTO art_hashes VALUES (?, ?)", batch)
-            conn.commit()
+            write_batch(conn, batch)
             batch.clear()
 
+    expected = len(have) + len(todo)
     done = hash_images(todo, store)
     if batch:
-        conn.executemany("INSERT OR REPLACE INTO art_hashes VALUES (?, ?)", batch)
+        write_batch(conn, batch)
 
     total = conn.execute("SELECT count(*) FROM art_hashes").fetchone()[0]
+    # Plancher de lignes : un download raté de l'index précédent (continue-on-
+    # error en CI) vide `have` -> rebuild total ; si le réseau skippe alors une
+    # part des images, `total` s'effondre et on republierait un index tronqué
+    # qui ÉCRASE le bon. On refuse de sceller un build ayant perdu plus de 10 %
+    # de sa cible : exit non-zéro, la CI ne publie pas, le prochain passage
+    # retente. Le seuil de 1000 épargne les premiers builds et les jours calmes.
+    if expected >= 1000 and total < expected * 0.9:
+        conn.close()
+        print(
+            f"ABORT: index tronqué ({total} lignes pour {expected} attendues, "
+            f"{done} traitées) — publication refusée",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     conn.executemany(
         "INSERT OR REPLACE INTO meta VALUES (?, ?)",
         [
             ("algo_version", str(HASH_ALGO_VERSION)),
+            ("embed_version", str(EMBED_VERSION)),
             ("crop_signature", CROP_SIGNATURE),
             ("groups", str(total)),
             ("bulk_updated_at", stamp),
@@ -478,6 +533,7 @@ def main() -> None:
         "groups": total,
         "new": done,
         "algo_version": HASH_ALGO_VERSION,
+        "embed_version": EMBED_VERSION,
         "bulk": stamp,
     }
     print(json.dumps(summary))
