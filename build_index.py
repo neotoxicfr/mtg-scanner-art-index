@@ -352,11 +352,15 @@ def hash_images(todo: dict[str, str], on_result) -> int:
             while not stop.wait(PROBE_SECONDS):
                 with counter:
                     now_done, now_errors = done, errors
-                rate = (now_done - seen_done) / PROBE_SECONDS
+                window_done = now_done - seen_done
+                rate = window_done / PROBE_SECONDS
                 window_errors = now_errors - seen_errors
                 seen_done, seen_errors = now_done, now_errors
                 limit = throttle.limit
-                if window_errors > max(3, (now_done - seen_done) // 20 + 3):
+                # Tolérance d'erreurs proportionnelle au débit de la FENÊTRE :
+                # `now_done - seen_done` valait toujours 0 (seen_done venait
+                # d'être réassigné juste au-dessus), figeant le seuil à 3.
+                if window_errors > max(3, window_done // 20 + 3):
                     # Une rafale d'erreurs dit qu'on tape trop fort, pas qu'on
                     # va trop lentement : on recule franchement.
                     limit, direction, best_rate = max(WORKERS_MIN, limit // 2), -1, 0.0
@@ -469,6 +473,7 @@ def main() -> None:
             (newest or "",),
         )
         conn.commit()
+        conn.close()
         print("bulk unchanged — index already current")
         emit_output(0, total, stamp)
         return
