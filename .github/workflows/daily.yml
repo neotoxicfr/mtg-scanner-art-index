@@ -19,14 +19,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.13"
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      # Le modèle DINOv2 (~88 Mo) est épinglé par révision dans embed.py et
+      # vérifié par SHA-256 au chargement : parfait pour un cache. Sans lui, tout
+      # jour avec une nouvelle carte re-téléchargeait 88 Mo depuis HuggingFace.
+      # La clé suit embed.py (qui porte MODEL_REVISION) : bumper le modèle
+      # invalide le cache tout seul.
+      - name: Cache DINOv2 model
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: dinov2-small.onnx
+          key: dinov2-${{ hashFiles('embed.py') }}
 
       - name: Download previous index
         continue-on-error: true
