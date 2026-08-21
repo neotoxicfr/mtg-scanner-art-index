@@ -44,7 +44,16 @@ OUT = Path("art_hashes.sqlite")
 def bulk_entry() -> dict:
     with httpx.Client(headers=UA, timeout=30) as client:
         meta = client.get("https://api.scryfall.com/bulk-data").json()
-    return next(e for e in meta["data"] if e["type"] == BULK_TYPE)
+    # Message clair plutôt qu'un StopIteration/KeyError nu si Scryfall renomme
+    # un champ (déjà arrivé : download_uri -> jsonl_download_uri).
+    data = meta.get("data")
+    if not isinstance(data, list):
+        raise RuntimeError(f"réponse /bulk-data inattendue (clés: {sorted(meta)})")
+    entry = next((e for e in data if e.get("type") == BULK_TYPE), None)
+    if entry is None:
+        types = [e.get("type") for e in data]
+        raise RuntimeError(f"type de bulk '{BULK_TYPE}' absent de Scryfall (vus: {types})")
+    return entry
 
 
 def bulk_url(entry: dict) -> str:
@@ -63,9 +72,18 @@ def fetch_bulk(entry: dict, dest: Path) -> None:
         client.stream("GET", bulk_url(entry)) as r,
     ):
         r.raise_for_status()
+        expected = int(r.headers.get("content-length", 0))
+        written = 0
         with dest.open("wb") as f:
             for chunk in r.iter_bytes(1 << 20):
                 f.write(chunk)
+                written += len(chunk)
+    # Un download tronqué (réseau coupé) reste souvent partiellement parseable :
+    # il stamperait bulk_updated_at et raterait des cartes jusqu'au prochain
+    # régen Scryfall. On refuse un fichier plus court que le Content-Length.
+    if expected and written < expected:
+        dest.unlink(missing_ok=True)
+        raise RuntimeError(f"bulk tronqué : {written} octets reçus pour {expected} attendus")
 
 
 def cards_of(path: Path):
