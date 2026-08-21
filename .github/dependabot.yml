@@ -5,12 +5,26 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
     commit-message:
       prefix: chore
-  # Dépendances Python (requirements.txt + requirements-dev.txt).
+  # Dépendances Python. On refuse les MAJEURS d'OpenCV et onnxruntime : ils
+  # peuvent changer la numérique du redimensionnement / de l'inférence et
+  # décaler les bits du hash figé (algo_version 1) — un tel saut se fait à la
+  # main, avec rebuild et bump de version, jamais en PR automatique.
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "opencv-python-headless"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "onnxruntime"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: chore

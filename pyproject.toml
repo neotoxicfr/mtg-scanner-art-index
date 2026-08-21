@@ -1,0 +1,9 @@
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+# Jeu de règles explicite (aligné sur l'app compagne) : sans lui, ruff s'appuie
+# sur ses défauts, qui changent d'une version à l'autre et ont fait apparaître
+# des règles non voulues (PYI/BLE) au bump 0.16.
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]
