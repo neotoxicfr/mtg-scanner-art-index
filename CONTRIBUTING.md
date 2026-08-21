@@ -24,6 +24,6 @@ on real captures in the PR description.
 groups) and polite to Scryfall (keep the request delay). Test locally:
 
 ```
-pip install httpx ijson opencv-python-headless numpy
+pip install httpx opencv-python-headless numpy onnxruntime
 python build_index.py            # uses/creates art_hashes.sqlite in place
 ```

@@ -12,6 +12,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+# Même boîte d'art que image_hash : l'app embarque le crop d'art du warp
+# canonique, l'index doit embarquer le même crop de l'image Scryfall.
+from image_hash import ART_BOTTOM, ART_LEFT, ART_RIGHT, ART_TOP
+
 EMBED_DIM = 384
 _EMBED_SIZE = 224
 _IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -35,10 +39,6 @@ MODEL_URL = (
     f"{MODEL_REVISION}/onnx/model.onnx"
 )
 MODEL_PATH = Path("dinov2-small.onnx")
-
-# Même boîte d'art que image_hash : l'app embarque le crop d'art du warp
-# canonique, l'index doit embarquer le même crop de l'image Scryfall.
-from image_hash import ART_BOTTOM, ART_LEFT, ART_RIGHT, ART_TOP  # noqa: E402
 
 _session = None
 

@@ -47,7 +47,9 @@ def _dhash_channels(image: np.ndarray) -> bytes:
     if image.ndim == 2:
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return b"".join([_dhash_plane(gray)] + [_dhash_plane(image[:, :, ch]) for ch in range(3)])
+    return b"".join(
+        [_dhash_plane(gray)] + [_dhash_plane(image[:, :, ch]) for ch in range(3)]
+    )
 
 
 def _art_crop(image: np.ndarray, dx: float = 0.0, dy: float = 0.0) -> np.ndarray:
