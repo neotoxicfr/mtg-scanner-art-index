@@ -1,7 +1,7 @@
 # Bornes majeures : l'index est un hash figé (algo_version 1). Une montée MAJEURE
 # d'OpenCV, NumPy ou onnxruntime peut changer la numérique du redimensionnement
 # ou de l'inférence et décaler des bits sans bumper l'algo — on la bloque.
-httpx>=0.27,<1
+httpx>=0.28.1,<1
 numpy>=2.0,<3
 opencv-python-headless>=4.10,<5
 onnxruntime>=1.20,<2
