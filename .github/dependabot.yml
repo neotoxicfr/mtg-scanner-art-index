@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # Actions épinglées par SHA : le bot les fait avancer, sinon elles gèlent.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+  # Dépendances Python (requirements.txt + requirements-dev.txt).
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
