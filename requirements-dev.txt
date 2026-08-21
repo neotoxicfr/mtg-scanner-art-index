@@ -3,4 +3,4 @@
 # 2026, ruff 0.16.0 est sorti et a fait échouer un build dont le code n'avait
 # pas bougé — la machine de dev tournait en 0.15.22.
 ruff==0.15.22
-pytest>=8.3,<9
+pytest>=9.1.1,<10
