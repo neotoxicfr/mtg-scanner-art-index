@@ -1,3 +1,7 @@
 art_hashes.sqlite
-bulk_default.json
+bulk_default.jsonl.gz
+dinov2-small.onnx
+dinov2-small.partial
 __pycache__/
+.pytest_cache/
+.ruff_cache/
