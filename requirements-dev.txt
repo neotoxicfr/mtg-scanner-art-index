@@ -2,5 +2,5 @@
 # Sans ça, `pip install ruff` prend la dernière version publiée : le 29 juillet
 # 2026, ruff 0.16.0 est sorti et a fait échouer un build dont le code n'avait
 # pas bougé — la machine de dev tournait en 0.15.22.
-ruff==0.15.22
+ruff==0.16.3
 pytest>=8.3,<9
