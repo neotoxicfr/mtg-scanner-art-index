@@ -3,4 +3,4 @@
 # ruff peut faire échouer un build dont le code n'a pas bougé (déjà vu : 0.16.0
 # le 29 juillet 2026). On bump délibérément, code aligné en même temps.
 ruff==0.16.3
-pytest>=9.1,<10
+pytest>=9.1.1,<10
