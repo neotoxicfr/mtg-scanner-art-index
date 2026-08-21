@@ -84,8 +84,18 @@ def get_session():
     if _session is None:
         import onnxruntime as ort
 
+        # Threads épinglés + séquentiel : l'ordre de réduction flottante ne
+        # dépend plus du nombre de cœurs du runner, donc le MÊME code produit
+        # les mêmes vecteurs d'une machine à l'autre. Miroir de art_embed.py
+        # côté app, qui charge le même modèle sur le même provider CPU — la
+        # comparaison est un cosinus (robuste), mais aligner le provider évite
+        # de fuzzer le signal entre l'index (bâti ici, en CPU) et le scan.
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = 1
+        so.inter_op_num_threads = 1
+        so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         _session = ort.InferenceSession(
-            str(ensure_model()), providers=["CPUExecutionProvider"]
+            str(ensure_model()), sess_options=so, providers=["CPUExecutionProvider"]
         )
     return _session
 
