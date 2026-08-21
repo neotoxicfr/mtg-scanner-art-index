@@ -22,7 +22,9 @@ INDEX = Path(__file__).parent.parent / "art_hashes.sqlite"
 def main(image_path: str) -> None:
     conn = sqlite3.connect(f"file:{INDEX.as_posix()}?mode=ro", uri=True)
     meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
-    assert int(meta["algo_version"]) == HASH_ALGO_VERSION, "algo mismatch — update image_hash.py"
+    assert int(meta["algo_version"]) == HASH_ALGO_VERSION, (
+        "algo mismatch — update image_hash.py"
+    )
 
     # Un hash par illustration_id : la colonne `frame` a été retirée (le crop est
     # intérieur à l'art, deux cadres de la même illustration hashent pareil).
