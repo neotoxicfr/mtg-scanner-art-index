@@ -52,7 +52,9 @@ def bulk_entry() -> dict:
     entry = next((e for e in data if e.get("type") == BULK_TYPE), None)
     if entry is None:
         types = [e.get("type") for e in data]
-        raise RuntimeError(f"type de bulk '{BULK_TYPE}' absent de Scryfall (vus: {types})")
+        raise RuntimeError(
+            f"type de bulk '{BULK_TYPE}' absent de Scryfall (vus: {types})"
+        )
     return entry
 
 
@@ -83,7 +85,9 @@ def fetch_bulk(entry: dict, dest: Path) -> None:
     # régen Scryfall. On refuse un fichier plus court que le Content-Length.
     if expected and written < expected:
         dest.unlink(missing_ok=True)
-        raise RuntimeError(f"bulk tronqué : {written} octets reçus pour {expected} attendus")
+        raise RuntimeError(
+            f"bulk tronqué : {written} octets reçus pour {expected} attendus"
+        )
 
 
 def cards_of(path: Path):
