@@ -27,6 +27,11 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
       - name: Lint
-        run: ruff check .
+        # Le FORMAT aussi : la version de ruff est épinglée pour que le CI dise
+        # la même chose que la machine, mais seul `check` tournait ici. Le
+        # formateur avait donc dérivé sans que rien ne le signale.
+        run: |
+          ruff check .
+          ruff format --check .
       - name: Tests
         run: python -m pytest tests -q
