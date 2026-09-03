@@ -123,10 +123,36 @@ jobs:
             echo "\`meta.algo_version\` / \`meta.embed_version\` before use — see the"
             echo "README for the exact specification and a consumer example."
           } > notes.md
-          # Publication ATOMIQUE : jamais de delete-avant-create (qui laissait
-          # les consommateurs SANS release si create échouait ensuite). La
-          # release et le tag `latest` persistent ; seul l'asset est remplacé
-          # en place via --clobber.
+          # Jamais de delete-avant-create de la release (qui laissait les
+          # consommateurs SANS release si create échouait ensuite) : la
+          # release et le tag `latest` persistent, seul l'asset change.
           gh release create latest --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file notes.md \
             || gh release edit latest --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file notes.md
-          gh release upload latest art_hashes.sqlite --repo "$GITHUB_REPOSITORY" --clobber
+          # Remplacement de l'asset : `--clobber` supprimait l'ancien PUIS
+          # envoyait le nouveau — pas d'asset pendant tout l'upload, et
+          # jusqu'au lendemain si l'upload échouait. On envoie sous un nom
+          # temporaire, puis on permute par renommage : l'ancien reste
+          # téléchargeable tant que le nouveau n'est pas entièrement là. Ce
+          # n'est pas atomique (deux renommages), mais la fenêtre sans asset
+          # se compte en millisecondes, plus en minutes.
+          asset_id() {
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/latest" \
+              --jq ".assets[] | select(.name == \"$1\") | .id"
+          }
+          for stale in art_hashes.sqlite.new art_hashes.sqlite.bak; do
+            id=$(asset_id "$stale")
+            if [ -n "$id" ]; then
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"
+            fi
+          done
+          cp art_hashes.sqlite art_hashes.sqlite.new
+          gh release upload latest art_hashes.sqlite.new --repo "$GITHUB_REPOSITORY"
+          new_id=$(asset_id art_hashes.sqlite.new)
+          old_id=$(asset_id art_hashes.sqlite)
+          if [ -n "$old_id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/assets/$old_id" -f name=art_hashes.sqlite.bak
+          fi
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/assets/$new_id" -f name=art_hashes.sqlite
+          if [ -n "$old_id" ]; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$old_id"
+          fi
