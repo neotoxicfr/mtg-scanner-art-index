@@ -490,9 +490,12 @@ def main() -> None:
     bulk_changed = prev_stamp is None or prev_stamp[0] != stamp
     if not bulk_changed and not todo:
         total = conn.execute("SELECT count(*) FROM art_hashes").fetchone()[0]
+        # Same fallback as the sealing branch below: an empty manifest page
+        # must not erase the watermark, or the next run would treat the index
+        # as a first pass and silently drop every reillustration in between.
         conn.execute(
             "INSERT OR REPLACE INTO meta VALUES ('image_updated_through', ?)",
-            (newest or "",),
+            (newest or watermark or "",),
         )
         conn.commit()
         conn.close()
