@@ -195,17 +195,19 @@ COLLECTION_DELAY = 0.55  # 2 requêtes/seconde, limite dure documentée
 
 
 def updated_card_ids(
-    client: httpx.Client, since: str | None
-) -> tuple[list[str], str | None]:
-    """Cartes dont l'image a changé depuis `since`, et la nouvelle marque.
+    client: httpx.Client, since: str | None, start_page: int = 1
+) -> tuple[list[str], str | None, int | None]:
+    """Cartes dont l'image a changé depuis `since`, la nouvelle marque, et la
+    page où reprendre au prochain passage si le plafond a été atteint.
 
     Sans marque connue (premier passage), on ne recalcule rien : on la pose,
     sinon ce passage re-hasherait la base entière pour rien."""
     ids: list[str] = []
     newest: str | None = None
     capped = True
-    for page in range(1, MANIFEST_MAX_PAGES + 1):
-        if page > 1:
+    last_page = start_page
+    for page in range(start_page, start_page + MANIFEST_MAX_PAGES):
+        if page > start_page:
             time.sleep(MANIFEST_DELAY)
         r = client.get(MANIFEST_URL, params={"order": "imageupdated", "page": page})
         r.raise_for_status()
@@ -217,7 +219,7 @@ def updated_card_ids(
         if newest is None:
             newest = entries[0].get("image_updated_at")
         if since is None:
-            return [], newest
+            return [], newest, None
         stop = False
         for e in entries:
             stamp = e.get("image_updated_at")
@@ -228,12 +230,17 @@ def updated_card_ids(
         if stop or not body.get("has_more"):
             capped = False
             break
+        last_page = page
     if capped:
-        # Le dire : une troncature silencieuse se lirait comme « tout est à jour ».
-        print(
-            f"manifest: stopped after {MANIFEST_MAX_PAGES} pages, rest picked up next build"
-        )
-    return ids, newest
+        # The pages past the cap hold entries OLDER than every one processed
+        # here, so any watermark this run could seal would sit above them and
+        # the next walk would stop before reaching them: they would be lost
+        # for good. The caller keeps its watermark and resumes on the next
+        # page instead. New entries only push the backlog further down the
+        # manifest, so resuming by page number overlaps, never skips.
+        print(f"manifest: stopped after page {last_page}, resuming there next build")
+        return ids, newest, last_page + 1
+    return ids, newest, None
 
 
 def hydrate(client: httpx.Client, card_ids: list[str]) -> dict[str, str]:
@@ -438,6 +445,28 @@ def write_batch(
     conn.commit()
 
 
+def carry_over_meta(
+    watermark: str | None, newest: str | None, resume_page: int | None
+) -> list[tuple[str, str]]:
+    """Meta rows telling the next run where this manifest walk stopped."""
+    if resume_page is not None:
+        # The watermark stays put: the backlog below it is still unprocessed.
+        # `newest` is the manifest top as of this run — the pages before the
+        # resume point are done, so it becomes the watermark once the
+        # backlog is exhausted.
+        return [
+            ("image_updated_through", watermark or ""),
+            (
+                "manifest_resume",
+                json.dumps({"page": resume_page, "newest": newest or ""}),
+            ),
+        ]
+    return [
+        ("image_updated_through", newest or watermark or ""),
+        ("manifest_resume", ""),
+    ]
+
+
 def emit_output(new: int, groups: int, bulk_stamp: str = "") -> None:
     github_output = Path(sys.argv[1]) if len(sys.argv) > 1 else None
     if github_output:
@@ -476,8 +505,16 @@ def main() -> None:
         "SELECT value FROM meta WHERE key='image_updated_through'"
     ).fetchone()
     watermark = row[0] if row and row[0] else None
+    row = conn.execute("SELECT value FROM meta WHERE key='manifest_resume'").fetchone()
+    resume = json.loads(row[0]) if row and row[0] else None
     with httpx.Client(headers=UA, timeout=30) as api:
-        changed, newest = updated_card_ids(api, watermark)
+        changed, newest, resume_page = updated_card_ids(
+            api, watermark, resume["page"] if resume else 1
+        )
+        if resume:
+            # Mid-backlog: the top of the manifest was recorded by the run
+            # that hit the cap, the page we just resumed from is not it.
+            newest = resume["newest"] or None
         if changed:
             print(f"{len(changed)} card(s) reillustrated since {watermark}")
             todo.update(hydrate(api, changed))
@@ -490,12 +527,9 @@ def main() -> None:
     bulk_changed = prev_stamp is None or prev_stamp[0] != stamp
     if not bulk_changed and not todo:
         total = conn.execute("SELECT count(*) FROM art_hashes").fetchone()[0]
-        # Same fallback as the sealing branch below: an empty manifest page
-        # must not erase the watermark, or the next run would treat the index
-        # as a first pass and silently drop every reillustration in between.
-        conn.execute(
-            "INSERT OR REPLACE INTO meta VALUES ('image_updated_through', ?)",
-            (newest or watermark or "",),
+        conn.executemany(
+            "INSERT OR REPLACE INTO meta VALUES (?, ?)",
+            carry_over_meta(watermark, newest, resume_page),
         )
         conn.commit()
         conn.close()
@@ -554,7 +588,7 @@ def main() -> None:
             ("crop_signature", CROP_SIGNATURE),
             ("groups", str(total)),
             ("bulk_updated_at", stamp),
-            ("image_updated_through", newest or watermark or ""),
+            *carry_over_meta(watermark, newest, resume_page),
         ],
     )
     conn.commit()

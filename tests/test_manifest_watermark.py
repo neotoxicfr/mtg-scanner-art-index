@@ -70,7 +70,7 @@ def _run_quiet_day(monkeypatch, tmp_path, manifest):
 
 def test_an_empty_manifest_page_keeps_the_watermark(monkeypatch, tmp_path):
     _seed(tmp_path / "idx.sqlite", image_updated_through="2026-08-30T00:00:00Z")
-    _run_quiet_day(monkeypatch, tmp_path, lambda api, since: ([], None))
+    _run_quiet_day(monkeypatch, tmp_path, lambda api, since, page: ([], None, None))
     assert _meta(tmp_path / "idx.sqlite", "image_updated_through") == (
         "2026-08-30T00:00:00Z"
     )
@@ -78,5 +78,28 @@ def test_an_empty_manifest_page_keeps_the_watermark(monkeypatch, tmp_path):
 
 def test_a_quiet_day_still_advances_the_watermark(monkeypatch, tmp_path):
     _seed(tmp_path / "idx.sqlite", image_updated_through="2026-08-30T00:00:00Z")
-    _run_quiet_day(monkeypatch, tmp_path, lambda api, since: ([], STAMP))
+    _run_quiet_day(monkeypatch, tmp_path, lambda api, since, page: ([], STAMP, None))
     assert _meta(tmp_path / "idx.sqlite", "image_updated_through") == STAMP
+
+
+def test_a_finished_backlog_seals_the_manifest_top_recorded_at_the_cap(
+    monkeypatch, tmp_path
+):
+    """Le passage qui reprend page 6 ne voit pas le haut du manifeste : la
+    marque à sceller est celle notée par le passage qui a plafonné."""
+    idx = tmp_path / "idx.sqlite"
+    _seed(
+        idx,
+        image_updated_through="2026-08-30T00:00:00Z",
+        manifest_resume='{"page": 6, "newest": "2026-09-01T08:00:00Z"}',
+    )
+    asked = []
+
+    def manifest(api, since, page):
+        asked.append((since, page))
+        return [], "2026-08-31T12:00:00Z", None
+
+    _run_quiet_day(monkeypatch, tmp_path, manifest)
+    assert asked == [("2026-08-30T00:00:00Z", 6)]
+    assert _meta(idx, "image_updated_through") == "2026-09-01T08:00:00Z"
+    assert _meta(idx, "manifest_resume") == ""
