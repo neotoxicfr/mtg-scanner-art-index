@@ -318,8 +318,9 @@ class Throttle:
             self._cv.notify()
 
 
-def hash_images(todo: dict[str, str], on_result) -> int:
+def hash_images(todo: dict[str, str], on_result) -> tuple[int, dict[str, str]]:
     """Télécharge et hashe toutes les images, en cherchant le débit maximal.
+    Renvoie le nombre d'images hashées et celles qui ont échoué.
 
     Montée par paliers tant que le débit progresse, demi-tour dès qu'il baisse
     — c'est le sommet qu'on cherche, et il est plat : dépasser coûte autant que
@@ -328,9 +329,10 @@ def hash_images(todo: dict[str, str], on_result) -> int:
     lentement."""
     items = list(todo.items())
     if not items:
-        return 0
+        return 0, {}
     throttle = Throttle(min(WORKERS_START, len(items)))
     done = errors = 0
+    failed: dict[str, str] = {}
     counter = threading.Lock()
 
     with httpx.Client(
@@ -364,6 +366,7 @@ def hash_images(todo: dict[str, str], on_result) -> int:
                     with counter:
                         errors += 1
                         done += 1
+                        failed[illu] = uri
                     return None
             with counter:
                 done += 1
@@ -424,7 +427,7 @@ def hash_images(todo: dict[str, str], on_result) -> int:
                 pilot.join(timeout=PROBE_SECONDS + 1)
 
     print(f"{done - errors}/{len(items)} images hashées, {errors} ignorée(s)")
-    return done - errors
+    return done - errors, failed
 
 
 def write_batch(
@@ -446,15 +449,25 @@ def write_batch(
 
 
 def carry_over_meta(
-    watermark: str | None, newest: str | None, resume_page: int | None
+    watermark: str | None,
+    newest: str | None,
+    resume_page: int | None,
+    failed: dict[str, str],
 ) -> list[tuple[str, str]]:
-    """Meta rows telling the next run where this manifest walk stopped."""
+    """Meta rows telling the next run where this one stopped short."""
+    # A reillustrated card whose download failed keeps its stale hash: it is
+    # already in the index, and the manifest never offers it again once the
+    # watermark has passed it. The watermark still advances (a permanently
+    # undecodable image must not stall it forever); the failures are queued
+    # for the next run instead.
+    rows = [("retry_images", json.dumps(failed) if failed else "")]
     if resume_page is not None:
         # The watermark stays put: the backlog below it is still unprocessed.
         # `newest` is the manifest top as of this run — the pages before the
         # resume point are done, so it becomes the watermark once the
         # backlog is exhausted.
         return [
+            *rows,
             ("image_updated_through", watermark or ""),
             (
                 "manifest_resume",
@@ -462,6 +475,7 @@ def carry_over_meta(
             ),
         ]
     return [
+        *rows,
         ("image_updated_through", newest or watermark or ""),
         ("manifest_resume", ""),
     ]
@@ -487,10 +501,13 @@ def main() -> None:
         r[0] for r in conn.execute("SELECT illustration_id FROM art_hashes").fetchall()
     }
 
+    # Images the previous run failed to fetch come first: see carry_over_meta.
+    row = conn.execute("SELECT value FROM meta WHERE key='retry_images'").fetchone()
+    todo: dict[str, str] = json.loads(row[0]) if row and row[0] else {}
+
     # Localized arts carry their own illustration_id but exist in no English
     # printing, so default_cards never lists them (JP Mystical Archive, WCS
     # promos, Phyrexian SLDs...). extra_groups.json pins them explicitly.
-    todo: dict[str, str] = {}
     extra_path = Path("extra_groups.json")
     if extra_path.exists():
         for extra in json.loads(extra_path.read_text(encoding="utf-8")):
@@ -529,7 +546,7 @@ def main() -> None:
         total = conn.execute("SELECT count(*) FROM art_hashes").fetchone()[0]
         conn.executemany(
             "INSERT OR REPLACE INTO meta VALUES (?, ?)",
-            carry_over_meta(watermark, newest, resume_page),
+            carry_over_meta(watermark, newest, resume_page, {}),
         )
         conn.commit()
         conn.close()
@@ -561,7 +578,7 @@ def main() -> None:
             batch.clear()
 
     expected = len(have) + len(todo)
-    done = hash_images(todo, store)
+    done, failed = hash_images(todo, store)
     if batch:
         write_batch(conn, batch)
 
@@ -588,7 +605,7 @@ def main() -> None:
             ("crop_signature", CROP_SIGNATURE),
             ("groups", str(total)),
             ("bulk_updated_at", stamp),
-            *carry_over_meta(watermark, newest, resume_page),
+            *carry_over_meta(watermark, newest, resume_page, failed),
         ],
     )
     conn.commit()

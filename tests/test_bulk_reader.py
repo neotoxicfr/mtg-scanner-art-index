@@ -160,13 +160,28 @@ def test_the_page_cap_keeps_the_watermark_and_resumes_by_page(monkeypatch):
 def test_carry_over_meta_seals_only_a_finished_walk():
     from build_index import carry_over_meta
 
-    capped = dict(carry_over_meta("W", "N", 6))
+    capped = dict(carry_over_meta("W", "N", 6, {}))
     assert capped["image_updated_through"] == "W"
     assert json.loads(capped["manifest_resume"]) == {"page": 6, "newest": "N"}
 
-    done = dict(carry_over_meta("W", "N", None))
-    assert done == {"image_updated_through": "N", "manifest_resume": ""}
-    assert dict(carry_over_meta("W", None, None))["image_updated_through"] == "W"
+    done = dict(carry_over_meta("W", "N", None, {}))
+    assert done == {
+        "image_updated_through": "N",
+        "manifest_resume": "",
+        "retry_images": "",
+    }
+    assert dict(carry_over_meta("W", None, None, {}))["image_updated_through"] == "W"
+
+
+def test_failed_images_are_queued_for_the_next_run_not_the_watermark():
+    """L'image ratée est déjà dans l'index avec un hash périmé, et le
+    manifeste ne la reproposera plus : sans file d'attente, une 5xx passagère
+    figeait l'ancienne empreinte pour toujours."""
+    from build_index import carry_over_meta
+
+    rows = dict(carry_over_meta("W", "N", None, {"i1": "https://x/i1.jpg"}))
+    assert rows["image_updated_through"] == "N"
+    assert json.loads(rows["retry_images"]) == {"i1": "https://x/i1.jpg"}
 
 
 def test_hydrate_batches_by_seventy_five(monkeypatch):
@@ -243,8 +258,12 @@ def test_a_small_batch_does_not_bother_adapting(monkeypatch):
             raise build_index.httpx.HTTPError("hors ligne")
 
     monkeypatch.setattr(build_index.httpx, "Client", Client)
-    build_index.hash_images({f"i{i}": "u" for i in range(5)}, lambda r: None)
+    hashed, failed = build_index.hash_images(
+        {f"i{i}": "u" for i in range(5)}, lambda r: None
+    )
     assert adjusted == [], "aucun réglage ne doit avoir lieu sous le seuil"
+    assert hashed == 0
+    assert failed == {f"i{i}": "u" for i in range(5)}
 
 
 def test_quantize_uses_the_full_int8_range():
