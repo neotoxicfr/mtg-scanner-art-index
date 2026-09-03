@@ -91,9 +91,10 @@ def test_first_run_only_sets_the_watermark(monkeypatch):
     client = FakeClient(
         [_page([{"id": "a", "image_updated_at": "2026-07-29T10:00:00Z"}])]
     )
-    ids, newest = updated_card_ids(client, None)
+    ids, newest, resume = updated_card_ids(client, None)
     assert ids == []
     assert newest == "2026-07-29T10:00:00Z"
+    assert resume is None
 
 
 def test_stops_at_the_watermark(monkeypatch):
@@ -110,11 +111,62 @@ def test_stops_at_the_watermark(monkeypatch):
             )
         ]
     )
-    ids, newest = updated_card_ids(client, "2026-07-15T00:00:00Z")
+    ids, newest, resume = updated_card_ids(client, "2026-07-15T00:00:00Z")
     assert ids == ["neuf"]
     assert newest == "2026-07-29T10:00:00Z"
+    assert resume is None
     # Une seule page lue : inutile de dérouler le manifeste entier.
     assert len(client.gets) == 1
+
+
+def _stamps(n, first):
+    """`n` entries, newest first, one minute apart from `first` downwards."""
+    return [
+        {
+            "id": f"c{first - i}",
+            "image_updated_at": f"2026-08-01T10:{first - i:02d}:00Z",
+        }
+        for i in range(n)
+    ]
+
+
+def test_the_page_cap_keeps_the_watermark_and_resumes_by_page(monkeypatch):
+    """Les pages au-delà du plafond sont plus ANCIENNES que tout ce qui a été
+    traité : avancer la marque les perdrait pour toujours. On la garde et on
+    reprend à la page suivante au passage d'après."""
+    import build_index
+
+    monkeypatch.setattr(build_index, "MANIFEST_MAX_PAGES", 2)
+    monkeypatch.setattr(build_index, "MANIFEST_DELAY", 0)
+    pages = [
+        _page(_stamps(3, 59), has_more=True),
+        _page(_stamps(3, 56), has_more=True),
+        _page(_stamps(3, 53)),
+    ]
+    since = "2026-08-01T10:50:00Z"
+
+    ids, newest, resume = build_index.updated_card_ids(FakeClient(pages), since)
+    assert ids == ["c59", "c58", "c57", "c56", "c55", "c54"]
+    assert newest == "2026-08-01T10:59:00Z"
+    assert resume == 3
+
+    ids, newest, resume = build_index.updated_card_ids(
+        FakeClient(pages), since, start_page=resume
+    )
+    assert ids == ["c53", "c52", "c51"]
+    assert resume is None
+
+
+def test_carry_over_meta_seals_only_a_finished_walk():
+    from build_index import carry_over_meta
+
+    capped = dict(carry_over_meta("W", "N", 6))
+    assert capped["image_updated_through"] == "W"
+    assert json.loads(capped["manifest_resume"]) == {"page": 6, "newest": "N"}
+
+    done = dict(carry_over_meta("W", "N", None))
+    assert done == {"image_updated_through": "N", "manifest_resume": ""}
+    assert dict(carry_over_meta("W", None, None))["image_updated_through"] == "W"
 
 
 def test_hydrate_batches_by_seventy_five(monkeypatch):
