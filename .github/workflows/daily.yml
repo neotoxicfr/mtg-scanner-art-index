@@ -51,13 +51,23 @@ jobs:
       # même parse Scryfall, donc un renommage de champ le fait rétrécir avec).
       - name: Record previous index size
         id: prev
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          n=""
           if [ -f art_hashes.sqlite ]; then
             n=$(sqlite3 art_hashes.sqlite "SELECT value FROM meta WHERE key='groups'" 2>/dev/null || echo "")
-            echo "groups=$n" >> "$GITHUB_OUTPUT"
-          else
-            echo "groups=" >> "$GITHUB_OUTPUT"
           fi
+          # A failed download is exactly the case the guard exists for: the
+          # build starts from nothing, and a few percent of network errors
+          # then publish a truncated index over the good one. The release
+          # notes (written below as "| Groups | N |") still carry the
+          # published count, so read it from there.
+          if [ -z "$n" ]; then
+            n=$(gh release view latest --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null \
+                | sed -n 's/^| Groups | \([0-9][0-9]*\) |$/\1/p' | head -n 1)
+          fi
+          echo "groups=$n" >> "$GITHUB_OUTPUT"
 
       - name: Build/update index
         id: build
@@ -67,12 +77,21 @@ jobs:
       # = régression de parse (renommage d'un champ Scryfall), pas une vraie
       # baisse. On refuse d'écraser le bon index ; marge de 2 % pour de vraies
       # suppressions d'illustrations.
+      # Sans compte publié connu, un rebuild complet (plus de 1000 nouvelles
+      # lignes) n'a aucun témoin : on refuse de publier à l'aveugle plutôt
+      # que de laisser passer un index tronqué sous le seul plancher interne
+      # de 10 %.
       - name: Guard against a shrunken index
-        if: steps.build.outputs.new != '0' && steps.prev.outputs.groups != ''
+        if: steps.build.outputs.new != '0'
         env:
           PREV: ${{ steps.prev.outputs.groups }}
           NOW: ${{ steps.build.outputs.groups }}
+          NEW: ${{ steps.build.outputs.new }}
         run: |
+          if [ -z "$PREV" ]; then
+            awk -v n="$NEW" 'BEGIN{ if (n+0 > 1000) { printf "ABORT: compte publie inconnu et %d lignes reconstruites, publication a l aveugle refusee\n", n; exit 1 } }' || exit 1
+            exit 0
+          fi
           awk -v p="$PREV" -v n="$NOW" 'BEGIN{ if (p+0>0 && n+0 < p*0.98) { printf "ABORT: index retreci (%d groupes contre %d publies)\n", n, p; exit 1 } }'
 
       - name: Publish release
