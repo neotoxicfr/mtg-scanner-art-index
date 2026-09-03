@@ -103,3 +103,18 @@ def test_a_finished_backlog_seals_the_manifest_top_recorded_at_the_cap(
     assert asked == [("2026-08-30T00:00:00Z", 6)]
     assert _meta(idx, "image_updated_through") == "2026-09-01T08:00:00Z"
     assert _meta(idx, "manifest_resume") == ""
+
+
+def test_queued_failures_are_retried_then_cleared(monkeypatch, tmp_path):
+    idx = tmp_path / "idx.sqlite"
+    _seed(idx, image_updated_through=STAMP, retry_images='{"old": "https://x/old.jpg"}')
+    asked = []
+
+    def hash_images(todo, on_result):
+        asked.append(dict(todo))
+        return 0, {}
+
+    monkeypatch.setattr(build_index, "hash_images", hash_images)
+    _run_quiet_day(monkeypatch, tmp_path, lambda api, since, page: ([], STAMP, None))
+    assert asked == [{"old": "https://x/old.jpg"}]
+    assert _meta(idx, "retry_images") == ""

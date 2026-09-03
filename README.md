@@ -48,7 +48,8 @@ CREATE TABLE art_embeddings (
 );
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 -- meta keys: algo_version, embed_version, crop_signature, groups,
---            bulk_updated_at, image_updated_through
+--            bulk_updated_at, image_updated_through, manifest_resume,
+--            retry_images (the last two are build bookkeeping, usually empty)
 ```
 
 Map a matched `illustration_id` back to concrete printings with Scryfall's own
