@@ -124,7 +124,8 @@ Known limitations:
 
 [`build_index.py`](build_index.py) runs daily via GitHub Actions:
 download the previous release → diff Scryfall's `default_cards` bulk for
-missing illustrations → fetch only those images (rate-limited, `small` size)
+missing illustrations → fetch only those images (`small` size, from
+`cards.scryfall.io` with adaptive concurrency that halves on an error burst)
 → hash and embed → publish. Only paper printings are indexed (`games` must
 contain `paper`): digital-only arts (rebalanced Alchemy, Arena/MTGO
 exclusives) cannot be scanned. A change to the hash parameters (crop box or

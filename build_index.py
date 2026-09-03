@@ -191,7 +191,9 @@ MANIFEST_DELAY = 6.5  # 10 requêtes/minute, limite dure documentée
 MANIFEST_MAX_PAGES = 5
 COLLECTION_URL = "https://api.scryfall.com/cards/collection"
 COLLECTION_BATCH = 75  # maximum documenté
-COLLECTION_DELAY = 0.55  # 2 requêtes/seconde, limite dure documentée
+# Scryfall documents ~10 requests/s (50-100 ms apart); each POST here carries
+# 75 cards, so ~2/s is deliberately far below that, not the documented limit.
+COLLECTION_DELAY = 0.55
 
 
 def updated_card_ids(
