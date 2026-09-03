@@ -2,5 +2,5 @@
 # Sans ça, `pip install ruff` prend la dernière version publiée et un bump de
 # ruff peut faire échouer un build dont le code n'a pas bougé (déjà vu : 0.16.0
 # le 29 juillet 2026). On bump délibérément, code aligné en même temps.
-ruff==0.16.4
+ruff==0.16.5
 pytest>=9.1,<10
