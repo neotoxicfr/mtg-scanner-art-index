@@ -21,7 +21,9 @@ on real captures in the PR description.
 ## Build pipeline
 
 `build_index.py` must stay incremental (a daily run fetches only missing
-groups) and polite to Scryfall (keep the request delay). Test locally:
+groups) and polite to Scryfall: image downloads run under an adaptive
+concurrency cap that backs off on errors, and the `api.scryfall.com`
+endpoints keep their fixed delays — keep both. Test locally:
 
 ```
 pip install httpx opencv-python-headless numpy onnxruntime
