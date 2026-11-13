@@ -9,9 +9,10 @@ updates:
     target-branch: dev
     schedule:
       interval: daily
-    # Aucun délai : sans cette clé, Dependabot attend 3 jours par défaut.
+    # Aucun délai : sans cette clé, Dependabot attend 3 jours par défaut
+    # (default-days n'accepte que 1 à 90 ; exclude "*" retire tout délai).
     cooldown:
-      default-days: 0
+      exclude: ["*"]
     groups:
       actions:
         update-types: [minor, patch]
@@ -22,9 +23,10 @@ updates:
     target-branch: dev
     schedule:
       interval: daily
-    # Aucun délai : sans cette clé, Dependabot attend 3 jours par défaut.
+    # Aucun délai : sans cette clé, Dependabot attend 3 jours par défaut
+    # (default-days n'accepte que 1 à 90 ; exclude "*" retire tout délai).
     cooldown:
-      default-days: 0
+      exclude: ["*"]
     groups:
       python:
         update-types: [minor, patch]
