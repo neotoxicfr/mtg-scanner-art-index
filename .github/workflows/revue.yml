@@ -5,7 +5,7 @@ name: revue
 # pose le statut `revue-coderabbit` (exigé sur dev) : success seulement si le
 # check CodeRabbit du commit dit « Review completed », pending sinon — pending
 # bloque la fusion sans échouer, donc sans mail. Une fois par jour, une PR
-# encore bloquée reçoit UNE demande de revue, jamais deux.
+# encore bloquée voit sa revue redemandée, une seule fois par commit.
 on:
   check_run:
     types: [completed]
@@ -53,15 +53,28 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Redemander les revues manquantes, une fois par PR
+      # CodeRabbit ignore les commandes postées par un bot (« @coderabbitai
+      # review » de github-actions restait sans réponse). Repasser la PR en
+      # brouillon puis « prête » déclenche une revue ; le passage en
+      # brouillon coupe la fusion automatique, réactivée ici. La relance est
+      # notée par un statut sur le commit : une seule fois par commit, sans
+      # commentaire qui notifie.
+      - name: Redemander les revues manquantes, une fois par commit
         run: |
           for n in $(gh pr list -R "$GITHUB_REPOSITORY" --base dev --state open --json number -q '.[].number'); do
-            sha=$(gh pr view "$n" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
+            read -r sha auteur tete <<<"$(gh pr view "$n" -R "$GITHUB_REPOSITORY" \
+              --json headRefOid,author,headRefName -q '"\(.headRefOid) \(.author.login) \(.headRefName)"')"
+            statuts=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/status" -q '[.statuses[].context]|join(" ")')
             etat=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/status" \
               -q '[.statuses[]|select(.context=="revue-coderabbit")|.state][0] // "absent"')
             [ "$etat" = success ] && continue
-            deja=$(gh api "repos/$GITHUB_REPOSITORY/issues/$n/comments" \
-              -q '[.[]|select(.user.login=="github-actions[bot]" and (.body|startswith("@coderabbitai review")))]|length')
-            [ "$deja" -gt 0 ] && continue
-            gh pr comment "$n" -R "$GITHUB_REPOSITORY" --body "@coderabbitai review"
+            case " $statuts " in *" relance-coderabbit "*) continue ;; esac
+            gh pr ready "$n" -R "$GITHUB_REPOSITORY" --undo
+            gh pr ready "$n" -R "$GITHUB_REPOSITORY"
+            if [ "$auteur" = "$GITHUB_REPOSITORY_OWNER" ]; then
+              if [ "$tete" = main ]; then mode=--merge; else mode=--squash; fi
+              gh pr merge "$n" -R "$GITHUB_REPOSITORY" --auto "$mode"
+            fi
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$sha" -f state=success \
+              -f context=relance-coderabbit -f description="Revue redemandée" >/dev/null
           done
