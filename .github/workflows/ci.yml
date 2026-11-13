@@ -1,19 +1,36 @@
 name: ci
 
+# Les PR seulement : `dev` et `main` n'avancent que par PR, un push
+# relancerait les mêmes contrôles une seconde fois. La veille quotidienne
+# n'échoue jamais : elle tient UNE issue à jour au lieu d'envoyer un mail
+# par jour.
 on:
-  push:
-    branches: [main]
   pull_request:
+    branches: [dev, main]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Binaires épinglés et vérifiés par SHA-256, téléchargés depuis les releases
+# GitHub : le script d'installation de Trivy dépend d'un domaine qui ne
+# répond plus.
+env:
+  TRIVY_VERSION: 0.76.2
+  TRIVY_SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  PIP_AUDIT_VERSION: 2.10.1
+
 jobs:
-  test:
+  tests:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -22,16 +39,95 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - name: Install
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-      - name: Lint
-        # Le FORMAT aussi : la version de ruff est épinglée pour que le CI dise
-        # la même chose que la machine, mais seul `check` tournait ici. Le
-        # formateur avait donc dérivé sans que rien ne le signale.
-        run: |
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      # Le FORMAT aussi : la version de ruff est épinglée pour que la CI dise
+      # la même chose que la machine.
+      - run: |
           ruff check .
           ruff format --check .
-      - name: Tests
-        run: python -m pytest tests -q
+      - run: python -m pytest tests -q
+
+  pip-audit:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - run: pip install "pip-audit==$PIP_AUDIT_VERSION"
+      - run: pip-audit -r requirements.txt -r requirements-dev.txt
+
+  trivy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Installer Trivy
+        run: |
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLo "$f" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$f"
+          echo "$TRIVY_SHA256  $f" | sha256sum -c -
+          tar -xzf "$f" -C "$RUNNER_TEMP" trivy
+      - run: >-
+          "$RUNNER_TEMP/trivy" fs --scanners vuln --severity HIGH,CRITICAL
+          --ignore-unfixed --exit-code 1 .
+
+  gitleaks:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Installer gitleaks
+        run: |
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLo "$f" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$f"
+          echo "$GITLEAKS_SHA256  $f" | sha256sum -c -
+          tar -xzf "$f" -C "$RUNNER_TEMP" gitleaks
+      - run: '"$RUNNER_TEMP/gitleaks" git --redact -v .'
+
+  veille:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITRE: Vulnérabilité à corriger
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: dev
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - name: Analyser dev
+        run: |
+          pip install "pip-audit==$PIP_AUDIT_VERSION"
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLo "$f" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$f"
+          echo "$TRIVY_SHA256  $f" | sha256sum -c -
+          tar -xzf "$f" -C "$RUNNER_TEMP" trivy
+          ok=0
+          { echo '```'; pip-audit -r requirements.txt -r requirements-dev.txt 2>&1 || ok=1
+            "$RUNNER_TEMP/trivy" fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+              --exit-code 1 --quiet . 2>&1 || ok=1; echo '```'; } > rapport.md
+          echo "TROUVE=$ok" >> "$GITHUB_ENV"
+      # Modifier le corps d'une issue ne notifie personne : un mail à
+      # l'ouverture, un à la fermeture, rien entre les deux.
+      - name: Tenir l'issue à jour
+        run: |
+          n=$(gh issue list --state open --search "in:title \"$TITRE\"" --json number -q '.[0].number')
+          if [ "$TROUVE" = 1 ]; then
+            if [ -n "$n" ]; then gh issue edit "$n" --body-file rapport.md
+            else gh issue create --title "$TITRE" --body-file rapport.md; fi
+          elif [ -n "$n" ]; then
+            gh issue close "$n" --comment "Plus aucune vulnérabilité connue sur dev."
+          fi

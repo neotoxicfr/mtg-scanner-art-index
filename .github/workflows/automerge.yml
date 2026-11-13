@@ -1,0 +1,38 @@
+name: automerge
+
+# Tout ce qui passe les contrôles fusionne seul dans dev : PR de Dependabot
+# (majeures comprises, les tests décident) et du propriétaire. Les mises à
+# jour de SÉCURITÉ visent toujours la branche par défaut : elles sont
+# ramenées sur dev, jamais fusionnées sur main. Une modification faite avec
+# GITHUB_TOKEN ne déclenche aucun autre workflow : le même job repointe ET
+# active la fusion.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+    branches: [dev, main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event.pull_request.user.login == 'dependabot[bot]' ||
+       github.event.pull_request.user.login == github.repository_owner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.html_url }}
+      BASE: ${{ github.event.pull_request.base.ref }}
+      AUTEUR: ${{ github.event.pull_request.user.login }}
+    steps:
+      - name: Ramener une mise à jour de sécurité sur dev
+        if: env.BASE == 'main' && env.AUTEUR == 'dependabot[bot]'
+        run: gh pr edit "$PR" --base dev
+      - name: Fusion automatique dans dev
+        if: env.BASE == 'dev' || env.AUTEUR == 'dependabot[bot]'
+        run: gh pr merge "$PR" --auto --squash

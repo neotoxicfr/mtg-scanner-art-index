@@ -1,30 +1,26 @@
 version: 2
+# Tout vers dev, chaque jour ; mineures et correctifs groupés par écosystème,
+# les majeures en PR à part. Pas d'exclusion de majeures : les tests golden
+# du hachage et de l'embedding cassent si les bits produits bougent, ce sont
+# eux qui décident.
 updates:
-  # Actions épinglées par SHA : le bot les fait avancer, sinon elles gèlent.
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule:
-      interval: weekly
+      interval: daily
     groups:
       actions:
-        patterns: ["*"]
+        update-types: [minor, patch]
     commit-message:
       prefix: chore
-  # Dépendances Python. On refuse les MAJEURS d'OpenCV et onnxruntime : ils
-  # peuvent changer la numérique du redimensionnement / de l'inférence et
-  # décaler les bits du hash figé (algo_version 1) — un tel saut se fait à la
-  # main, avec rebuild et bump de version, jamais en PR automatique.
   - package-ecosystem: pip
     directory: /
+    target-branch: dev
     schedule:
-      interval: weekly
+      interval: daily
     groups:
       python:
-        patterns: ["*"]
-    ignore:
-      - dependency-name: "opencv-python-headless"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "onnxruntime"
-        update-types: ["version-update:semver-major"]
+        update-types: [minor, patch]
     commit-message:
       prefix: chore
