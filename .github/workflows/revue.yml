@@ -1,0 +1,61 @@
+name: revue
+
+# Pas de fusion sans VRAIE revue CodeRabbit : une revue sautée (quota du plan
+# gratuit, siège, erreur) termine aussi son check en « success ». Ce workflow
+# pose le statut `revue-coderabbit` (exigé sur dev) : success seulement si le
+# check CodeRabbit du commit dit « Review completed », pending sinon — pending
+# bloque la fusion sans échouer, donc sans mail. Une fois par jour, une PR
+# encore bloquée reçoit UNE demande de revue, jamais deux.
+on:
+  check_run:
+    types: [completed]
+  schedule:
+    - cron: "41 9 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: write
+
+jobs:
+  statut:
+    if: github.event_name == 'check_run' && github.event.check_run.name == 'CodeRabbit' && github.event.check_run.app.id == 347564
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ github.event.check_run.head_sha }}
+      RESUME: ${{ github.event.check_run.output.summary }}
+    steps:
+      - name: Poser revue-coderabbit
+        run: |
+          if [ "$GITHUB_EVENT_CONCLUSION" = success ] && printf '%s' "$RESUME" | grep -q "Review completed"; then
+            etat=success; texte="Relu par CodeRabbit"
+          else
+            etat=pending; texte="Revue CodeRabbit absente ou sautée"
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$etat" \
+            -f context=revue-coderabbit -f description="$texte" >/dev/null
+        env:
+          GITHUB_EVENT_CONCLUSION: ${{ github.event.check_run.conclusion }}
+
+  relance:
+    if: github.event_name != 'check_run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Redemander les revues manquantes, une fois par PR
+        run: |
+          for n in $(gh pr list -R "$GITHUB_REPOSITORY" --base dev --state open --json number -q '.[].number'); do
+            sha=$(gh pr view "$n" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
+            etat=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/status" \
+              -q '[.statuses[]|select(.context=="revue-coderabbit")|.state][0] // "absent"')
+            [ "$etat" = success ] && continue
+            deja=$(gh api "repos/$GITHUB_REPOSITORY/issues/$n/comments" \
+              -q '[.[]|select(.user.login=="github-actions[bot]" and (.body|startswith("@coderabbitai review")))]|length')
+            [ "$deja" -gt 0 ] && continue
+            gh pr comment "$n" -R "$GITHUB_REPOSITORY" --body "@coderabbitai review"
+          done
