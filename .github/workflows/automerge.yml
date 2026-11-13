@@ -8,12 +8,13 @@ name: automerge
 # active la fusion.
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review]
     branches: [dev, main]
 
 permissions:
   contents: write
   pull-requests: write
+  statuses: write
 
 jobs:
   automerge:
@@ -28,11 +29,24 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PR: ${{ github.event.pull_request.html_url }}
       BASE: ${{ github.event.pull_request.base.ref }}
+      TETE: ${{ github.event.pull_request.head.ref }}
+      SHA: ${{ github.event.pull_request.head.sha }}
       AUTEUR: ${{ github.event.pull_request.user.login }}
     steps:
       - name: Ramener une mise à jour de sécurité sur dev
         if: env.BASE == 'main' && env.AUTEUR == 'dependabot[bot]'
         run: gh pr edit "$PR" --base dev
+      # CodeRabbit ignore Dependabot : pour une montée, la CI suffit. Le
+      # statut exigé sur dev est posé ici, à chaque nouveau commit de tête.
+      - name: Montée Dependabot, la CI suffit
+        if: env.AUTEUR == 'dependabot[bot]'
+        run: >-
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success
+          -f context=revue-coderabbit -f description="Montée Dependabot : la CI suffit" >/dev/null
+      # main → dev (report de .github/) : un VRAI merge, pour que dev ne soit
+      # jamais en retard sur main ; tout le reste en squash.
       - name: Fusion automatique dans dev
         if: env.BASE == 'dev' || env.AUTEUR == 'dependabot[bot]'
-        run: gh pr merge "$PR" --auto --squash
+        run: |
+          if [ "$TETE" = main ]; then mode=--merge; else mode=--squash; fi
+          gh pr merge "$PR" --auto "$mode"
