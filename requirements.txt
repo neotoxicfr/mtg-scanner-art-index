@@ -4,4 +4,4 @@
 httpx>=0.28.1,<1
 numpy>=2.5.4,<3
 opencv-python-headless>=5.0.0.93,<6
-onnxruntime>=1.31.1,<2
+onnxruntime>=1.32.0,<2
