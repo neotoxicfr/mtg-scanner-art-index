@@ -30,7 +30,9 @@ jobs:
     steps:
       - name: Poser revue-coderabbit
         run: |
-          if [ "$GITHUB_EVENT_CONCLUSION" = success ] && printf '%s' "$RESUME" | grep -q "Review completed"; then
+          # La PREMIÈRE ligne exacte du résumé, pas une sous-chaîne : le
+          # résumé peut reprendre du texte venu de la PR.
+          if [ "$GITHUB_EVENT_CONCLUSION" = success ] && [ "$(printf '%s\n' "$RESUME" | head -n1 | tr -d '\r')" = "Result: Success - Review completed" ]; then
             etat=success; texte="Relu par CodeRabbit"
           else
             etat=pending; texte="Revue CodeRabbit absente ou sautée"
