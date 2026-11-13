@@ -1,0 +1,142 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit conseille, il ne décide pas : la CI (ruff, pytest) bloque, le
+# mainteneur fusionne. Pas d'approbation automatique.
+language: fr-FR
+
+reviews:
+  profile: chill
+  high_level_summary: true
+  review_status: true
+  poem: false
+  auto_approvals:
+    enabled: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    # Une seule branche durable. Les PR Dependabot y arrivent aussi et sont
+    # relues comme les autres (aucun auteur ignoré).
+    base_branches:
+      - "^main$"
+
+  # Ce qui ne se relit pas : l'index publié, les données téléchargées, le
+  # modèle et les caches. Le rapport d'audit daté est une archive figée.
+  path_filters:
+    - "!**/*.sqlite"
+    - "!**/*.onnx"
+    - "!**/*.partial"
+    - "!**/*.jsonl.gz"
+    - "!**/__pycache__/**"
+    - "!**/.pytest_cache/**"
+    - "!**/.ruff_cache/**"
+    - "!docs/AUDIT-*.md"
+
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        Les commentaires et messages sont en français : c'est voulu, ne pas
+        proposer de les traduire. Le style est tenu par ruff (règles dans
+        pyproject.toml) et bloqué par la CI : ne pas relever le formatage ni ce
+        que ruff vérifie déjà.
+    - path: "image_hash.py"
+      instructions: |
+        Implémentation de RÉFÉRENCE, copiée telle quelle par les applications
+        qui consomment l'index. Toute modification des bits produits (cadre du
+        crop, plans, taille, interpolation, ordre d'empaquetage) DOIT
+        incrémenter HASH_ALGO_VERSION et s'accompagner des marges de
+        correspondance avant/après sur de vraies captures. Une modification qui
+        ne change pas les bits ne touche pas la version : la version 1 est
+        volontairement stable. Signaler tout changement de bits sans montée de
+        version.
+    - path: "embed.py"
+      instructions: |
+        Copie synchrone du module d'embedding de l'application compagne : un
+        écart entre les deux corrompt la fusion en silence. Toute modification
+        du vecteur produit (prétraitement, dimension, quantification int8)
+        DOIT incrémenter EMBED_VERSION. Le modèle est épinglé par révision ET
+        sha256 : ne pas proposer de suivre une branche mouvante. La session
+        ONNX tourne sur CPU, un seul fil, en séquentiel : c'est pour que les
+        vecteurs soient identiques d'une machine à l'autre, pas un oubli de
+        performance. L'import tardif d'onnxruntime est voulu.
+    - path: "build_index.py"
+      instructions: |
+        Le build doit rester INCRÉMENTAL (un passage quotidien ne télécharge que
+        les groupes manquants) et poli envers Scryfall : les téléchargements
+        d'images passent par un plafond de concurrence adaptatif qui recule sur
+        erreur, et les appels à api.scryfall.com gardent leurs délais fixes. Ne
+        pas proposer d'augmenter la concurrence ni de retirer ces délais. Le
+        fichier brut est lu en flux, par lots : ne jamais le charger en entier.
+        La publication remplace l'index par renommage et un plancher refuse un
+        index qui rétrécirait : ces gardes ne s'affaiblissent pas.
+    - path: "tests/**"
+      instructions: |
+        Les valeurs « golden » sont des références partagées avec l'application
+        compagne : en changer une sans monter HASH_ALGO_VERSION ou
+        EMBED_VERSION est une erreur à signaler. Les doublures minimales
+        (classes vides, paramètres inutilisés) sont voulues.
+    - path: "extra_groups.json"
+      instructions: |
+        Liste tenue à la main des illustrations localisées absentes de
+        default_cards. Chaque entrée garde un commentaire qui dit pourquoi elle
+        est là ; signaler une entrée sans commentaire ou en double.
+    - path: ".github/workflows/**"
+      instructions: |
+        Les actions sont épinglées par SHA de commit avec la version en
+        commentaire : à garder. Permissions minimales par job. La version de
+        ruff est épinglée dans requirements-dev.txt pour que la CI dise la même
+        chose que la machine de travail.
+
+  tools:
+    # Déjà bloquant en CI, avec la même configuration : doublon.
+    ruff:
+      enabled: false
+    # Jeux de règles différents de ceux du projet : du bruit.
+    pylint:
+      enabled: false
+    flake8:
+      enabled: false
+    # CodeQL tourne déjà sur le dépôt.
+    semgrep:
+      enabled: false
+    opengrep:
+      enabled: false
+    # Le README est en anglais : une relecture en français n'a pas de sens.
+    languagetool:
+      enabled: false
+    # Pas d'image ni d'infrastructure à analyser ici.
+    trivy:
+      enabled: false
+    checkov:
+      enabled: false
+    hadolint:
+      enabled: false
+    # Gardés : workflows, Markdown, dépendances et secrets.
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    markdownlint:
+      enabled: true
+    osvScanner:
+      enabled: true
+    gitleaks:
+      enabled: true
+    github-checks:
+      enabled: true
+
+knowledge_base:
+  opt_out: false
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CONTRIBUTING.md"
+  learnings:
+    scope: local
+  issues:
+    scope: local
+  pull_requests:
+    scope: local
+
+chat:
+  auto_reply: true
