@@ -4,19 +4,18 @@ name: revue
 # gratuit, siège, erreur) termine aussi son check en « success ». Ce workflow
 # pose le statut `revue-coderabbit` (exigé sur dev) : success seulement si le
 # check CodeRabbit du commit dit « Review completed », pending sinon — pending
-# bloque la fusion sans échouer, donc sans mail. Une fois par jour, une PR
-# encore bloquée voit sa revue redemandée, une seule fois par commit.
+# bloque la fusion sans échouer, donc sans mail. Redemander une revue ne se
+# fait pas d'ici : CodeRabbit ignore les commandes d'un bot, et GITHUB_TOKEN
+# ne peut ni passer une PR en brouillon ni la faire relire par réouverture.
+# C'est la session qui gère la PR qui la redemande, une fois, au nom du
+# propriétaire (« @coderabbitai review »).
 on:
   check_run:
     types: [completed]
-  schedule:
-    - cron: "41 9 * * *"
-  workflow_dispatch: {}
 
 permissions:
   contents: read
   statuses: write
-  pull-requests: write
 
 jobs:
   statut:
@@ -45,36 +44,3 @@ jobs:
             -f context=revue-coderabbit -f description="$texte" >/dev/null
         env:
           GITHUB_EVENT_CONCLUSION: ${{ github.event.check_run.conclusion }}
-
-  relance:
-    if: github.event_name != 'check_run'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      # CodeRabbit ignore les commandes postées par un bot (« @coderabbitai
-      # review » de github-actions restait sans réponse). Repasser la PR en
-      # brouillon puis « prête » déclenche une revue ; le passage en
-      # brouillon coupe la fusion automatique, réactivée ici. La relance est
-      # notée par un statut sur le commit : une seule fois par commit, sans
-      # commentaire qui notifie.
-      - name: Redemander les revues manquantes, une fois par commit
-        run: |
-          for n in $(gh pr list -R "$GITHUB_REPOSITORY" --base dev --state open --json number -q '.[].number'); do
-            read -r sha auteur tete <<<"$(gh pr view "$n" -R "$GITHUB_REPOSITORY" \
-              --json headRefOid,author,headRefName -q '"\(.headRefOid) \(.author.login) \(.headRefName)"')"
-            statuts=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/status" -q '[.statuses[].context]|join(" ")')
-            etat=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/status" \
-              -q '[.statuses[]|select(.context=="revue-coderabbit")|.state][0] // "absent"')
-            [ "$etat" = success ] && continue
-            case " $statuts " in *" relance-coderabbit "*) continue ;; esac
-            gh pr ready "$n" -R "$GITHUB_REPOSITORY" --undo
-            gh pr ready "$n" -R "$GITHUB_REPOSITORY"
-            if [ "$auteur" = "$GITHUB_REPOSITORY_OWNER" ]; then
-              if [ "$tete" = main ]; then mode=--merge; else mode=--squash; fi
-              gh pr merge "$n" -R "$GITHUB_REPOSITORY" --auto "$mode"
-            fi
-            gh api "repos/$GITHUB_REPOSITORY/statuses/$sha" -f state=success \
-              -f context=relance-coderabbit -f description="Revue redemandée" >/dev/null
-          done
