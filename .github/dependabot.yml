@@ -1,5 +1,5 @@
 version: 2
-# Tout vers dev, chaque jour ; mineures et correctifs groupés par écosystème,
+# Tout vers dev, chaque jour, sans délai ; mineures et correctifs groupés par écosystème,
 # les majeures en PR à part. Pas d'exclusion de majeures : les tests golden
 # du hachage et de l'embedding cassent si les bits produits bougent, ce sont
 # eux qui décident.
@@ -9,6 +9,9 @@ updates:
     target-branch: dev
     schedule:
       interval: daily
+    # Aucun délai : sans cette clé, Dependabot attend 3 jours par défaut.
+    cooldown:
+      default-days: 0
     groups:
       actions:
         update-types: [minor, patch]
@@ -19,6 +22,9 @@ updates:
     target-branch: dev
     schedule:
       interval: daily
+    # Aucun délai : sans cette clé, Dependabot attend 3 jours par défaut.
+    cooldown:
+      default-days: 0
     groups:
       python:
         update-types: [minor, patch]

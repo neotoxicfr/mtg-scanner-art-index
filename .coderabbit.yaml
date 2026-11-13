@@ -8,6 +8,8 @@ reviews:
   profile: chill
   high_level_summary: true
   review_status: true
+  # Le check « CodeRabbit » que le ruleset de dev exige.
+  commit_status: true
   poem: false
   auto_approvals:
     enabled: false
@@ -17,13 +19,12 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
-    # dev reçoit tout, main les releases. Les PR de bots ne sont pas relues :
-    # la CI décide pour elles.
+    # dev reçoit tout, main les releases. TOUTES les PR sont relues,
+    # Dependabot compris : la fusion automatique attend cette revue (check
+    # « CodeRabbit » exigé sur dev).
     base_branches:
       - "^dev$"
       - "^main$"
-    ignore_usernames:
-      - "dependabot[bot]"
 
   # Ce qui ne se relit pas : l'index publié, les données téléchargées, le
   # modèle et les caches. Le rapport d'audit daté est une archive figée.
