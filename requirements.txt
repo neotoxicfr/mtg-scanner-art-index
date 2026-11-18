@@ -3,5 +3,5 @@
 # ou de l'inférence et décaler des bits sans bumper l'algo — on la bloque.
 httpx>=0.28.1,<1
 numpy>=2.5.5,<3
-opencv-python-headless>=5.0.0.93,<6
+opencv-python-headless>=5.1.0.95,<6
 onnxruntime>=1.32.0,<2
